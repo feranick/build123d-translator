@@ -11,7 +11,7 @@ Why a translator: once a goal exists, there is nothing left to decide. Choosing 
 ```bash
 python -m venv .venv && source .venv/bin/activate      # Python 3.10+
 pip install -e ".[mcp,test]"                           # build123d, the MCP SDK, pytest
-pytest -q                                              # 35 tests, about 15 s
+pytest -q                                              # 57 tests, about 25 s
 ```
 
 build123d has wheels for Linux, macOS and Windows; no CAD application is needed.
@@ -84,6 +84,9 @@ A typical agent loop: read `goal_format`; turn the request into one goal per sol
 - **Sketched features** (`boss_cyl`, `boss_box`, `hole`, `hole_std`, `pocket_rect`, `profile_boss`, `profile_pocket`) go on the top face at `x`, `y`; on another face with its normal (`nx`, `ny`, `nz`) and centre `z`; on one of several faces with `at`; on an origin plane with `off`, extruded both ways (cross bores, windows, cavities).
 - **Revolve and groove** about an origin axis; **patterns and mirror** repeat the previous feature about or along an origin axis.
 - **Curved bodies** (2026.10.16.1): `loft` / `loft_cut` through cross-sections on parallel planes (smooth or ruled), `sweep` / `sweep_cut` of a profile along a 3D path of lines, arcs and splines; as base or later features, and repeatable with patterns and mirror. `examples/car_body.json` is a generic car body: a loft through 11 sections along X (a flat floor line and one spline over sides and roof each), with the four wheel arches cut (mirror across XZ), 1.4 s. These kinds are not in the Taiga goal format (FreeCAD's AdditiveLoft and AdditivePipe would be its counterparts), so they are checked against exact volumes instead (a ruled loft of two squares is a frustum; a circle swept a quarter turn is a quarter torus).
+- **Machining and moulding details** (2026.10.16.2): `taper` (draft angle) on bosses and pockets; `until: "next" | "last"` instead of a height or depth (a boss up to the next or last material, a pocket through the first wall or all of it); blind holes (`depth`, optional drill point `tip`), `hole_cb` (counterbore) and `hole_cs` (countersink); `draft` of side faces about a neutral plane; `thread` (a 60° V groove cut along a helix into a shaft or bore, right- or left-handed); helix segments `['H', ...]` in sweep paths (springs, coils).
+- **Whole-part operations** (2026.10.16.2): `profile_intersect` (keep the part inside an outline extruded through it), `split` (keep one side of a plane), `offset` (grow or shrink every face).
+- **Surfaces and markings** (2026.10.16.2): `thicken` (a sheet of thickness t through open curves: panels, blades), `text` (embossed or engraved on a face; give `font_path` for the same glyphs on every machine), `profile_project` (an outline projected onto curved faces, then embossed or engraved). Like lofts and sweeps, these are not in the Taiga format and are checked against exact volumes (frustums for taper and draft, Pappus for threads, cylinder shells for projections); all match to 1e-6 or better except the helix tube, whose 0.3 % is the profile's tilt to the path.
 - **Fillets and chamfers:** the top face's edge loop, all vertical edges, a face's edge loop, edges along an axis, or chosen edges by a point on each (`pts`); **shell** inward, open at the top face or at faces named by points.
 - **One goal per solid part.**
 
@@ -137,8 +140,9 @@ For any other goal file (the S 80, synthetic suites), `tools/freecad_reference.s
 
 | Component | Version |
 |---|---|
-| Package | 2026.10.16.1 |
-| `ops.py`, `goalformat.py`, `mcp_server.py` | 2026.10.16.1 (`loft`, `loft_cut`, `sweep`, `sweep_cut`) |
+| Package | 2026.10.16.2 |
+| `ops.py`, `goalformat.py`, `mcp_server.py` | 2026.10.16.2 (`taper` and `until` on bosses and pockets; blind holes with `tip`, `hole_cb`, `hole_cs`; `draft`, `offset`, `profile_intersect`, `split`, `thicken`, `thread`, `text`, `profile_project`; helix path segments; loft, sweep and thicken accepted as later features in validation) |
+| `ops.py`, `goalformat.py`, `mcp_server.py` (before) | 2026.10.16.1 (`loft`, `loft_cut`, `sweep`, `sweep_cut`) |
 | `ops.py` (before) | 2026.10.15.4 (booleans through OpenCascade directly, faces merged on a copy and kept only if the result stays valid: build123d's `clean()` broke solids fused across shared faces and changed them in place; an invalid result is healed with `fix()`; seam edges found with basic OCP calls, since newer OCP builds no longer expose `TopTools_IndexedDataMapOfShapeListOfShape`) |
 | `translate.py` | 2026.10.15.3 (IoU robust to coincident faces: when the plain intersection fails or comes back partial, one part is moved by a tiny step along skew directions and the intersection extrapolated to zero step) |
 | `api.py`, `tools/compare_freecad.py` | 2026.10.15.2 (the other part's bbox in comparisons; mismatches saved with their FreeCAD parts) |

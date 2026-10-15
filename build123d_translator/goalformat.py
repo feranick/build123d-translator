@@ -1,5 +1,5 @@
 """goalformat.py — the goal format: kinds, conventions, an example, and static validation.
-Version: 2026.10.16.1
+Version: 2026.10.16.2
 
 A goal file is {name: goal}; a goal is {"features": [{"kind": ..., "params": {...}}, ...]},
 one solid part, features in build order, lengths in mm. The format is the one of the
@@ -7,10 +7,14 @@ Taiga goal files, so goals carry over between the two tools unchanged.
 """
 from __future__ import annotations
 
-BASE_KINDS = ("base_box", "base_cyl", "base_hex", "base_ring", "profile_base", "profile_revolve", "loft", "sweep")
-NON_NUMERIC = ("outline", "sections", "path")
+BASE_KINDS = ("base_box", "base_cyl", "base_hex", "base_ring", "profile_base", "profile_revolve", "loft", "sweep", "thicken")
+NON_NUMERIC = ("outline", "sections", "path", "text")
 PATTERN_KINDS = ("polar_pattern", "linear_pattern", "mirror")
-SKETCHED_PLACEABLE = ("boss_cyl", "boss_box", "hole", "hole_std", "pocket_rect", "profile_boss", "profile_pocket")
+SKETCHED_PLACEABLE = ("boss_cyl", "boss_box", "hole", "hole_std", "pocket_rect", "profile_boss", "profile_pocket",
+                      "hole_cb", "hole_cs", "text")
+EXTRUDED = ("boss_cyl", "boss_box", "pocket_rect", "profile_boss", "profile_pocket")  # take taper and until
+DRESSUPS = ("fillet_top", "fillet_vertical", "chamfer_top", "shell", "fillet_edges", "chamfer_edges", "draft", "offset",
+            "profile_intersect", "split")
 
 KINDS = {
     "base_box": ({"w": "width along X", "d": "depth along Y", "h": "height along Z"}, {}, "Rectangular block, centred on the origin in X and Y, from z = 0 to h."),
@@ -24,13 +28,18 @@ KINDS = {
                         "Turned part or collar: the outline revolved about an origin axis; as base or later feature."),
     "profile_groove": ({"outline": "", "ax": "", "ay": "", "az": "", "nx": "", "ny": "", "nz": "", "off": "", "x": "", "y": "", "z": ""},
                        {"angle": ""}, "Removes the outline revolved about an origin axis (ring grooves, bores)."),
-    "boss_cyl": ({"r": "radius", "x": "centre x", "y": "centre y", "h": "height"}, {}, "Cylindrical boss on a face (top face by default)."),
-    "boss_box": ({"w": "", "d": "", "x": "", "y": "", "h": ""}, {}, "Rectangular boss on a face."),
-    "hole": ({"r": "radius", "x": "", "y": ""}, {}, "Through hole (through all, into the material)."),
-    "hole_std": ({"r": "", "x": "", "y": ""}, {}, "Through hole (same geometry as hole)."),
-    "pocket_rect": ({"w": "", "d": "", "x": "", "y": "", "depth": ""}, {}, "Rectangular pocket."),
-    "profile_boss": ({"outline": "closed outline on the face", "h": "height"}, {}, "Boss of any closed outline."),
-    "profile_pocket": ({"outline": ""}, {"depth": "depth (omit: through all)"}, "Pocket of any closed outline."),
+    "boss_cyl": ({"r": "radius", "x": "centre x", "y": "centre y", "h": "height"}, {"taper": "draft angle in degrees: positive narrows the boss outward or the pocket inward (needs h or depth, not off)", "until": "'next' or 'last' instead of h or depth (see conventions)"}, "Cylindrical boss on a face (top face by default)."),
+    "boss_box": ({"w": "", "d": "", "x": "", "y": "", "h": ""}, {"taper": "", "until": ""}, "Rectangular boss on a face."),
+    "hole": ({"r": "radius", "x": "", "y": ""}, {"depth": "blind hole depth (omit: through all)", "tip": "drill point angle in degrees at the bottom of a blind hole (118); omit: flat"}, "Hole into the material: through all, or blind with depth (and tip)."),
+    "hole_std": ({"r": "", "x": "", "y": ""}, {"depth": "", "tip": ""}, "Same geometry as hole."),
+    "hole_cb": ({"r": "bore radius", "cbr": "counterbore radius (> r)", "cbd": "counterbore depth", "x": "", "y": ""}, {"depth": "", "tip": ""},
+                "Counterbored hole from a face (socket-head screws): through all or blind."),
+    "hole_cs": ({"r": "bore radius", "csr": "countersink radius at the face (> r)", "x": "", "y": ""},
+                {"angle": "countersink included angle in degrees (90)", "depth": "", "tip": ""},
+                "Countersunk hole from a face (flat-head screws): through all or blind."),
+    "pocket_rect": ({"w": "", "d": "", "x": "", "y": "", "depth": ""}, {"taper": "", "until": ""}, "Rectangular pocket."),
+    "profile_boss": ({"outline": "closed outline on the face", "h": "height"}, {"taper": "", "until": ""}, "Boss of any closed outline."),
+    "profile_pocket": ({"outline": ""}, {"depth": "depth (omit: through all)", "taper": "", "until": ""}, "Pocket of any closed outline."),
     "polar_pattern": ({"n": "number of copies (incl. the original)"},
                       {"ax": "", "ay": "", "az": "axis (default Z; sign: direction of rotation)",
                        "angle": "extent in degrees (360; only with an axis given)"},
@@ -53,12 +62,35 @@ KINDS = {
     "loft_cut": ({"sections": "", "nx": "", "ny": "", "nz": ""}, {"ruled": ""}, "Removes a lofted solid (scoops, tapered cavities)."),
     "sweep": ({"outline": "closed profile on the plane normal to (nx, ny, nz) at off, centred on the path's start",
                "nx": "profile plane normal", "ny": "", "nz": "", "off": "profile plane position",
-               "path": "{'start': [x, y, z], 'segs': [['L', x, y, z], ['A', mx, my, mz, x, y, z], ['S', [[x, y, z], ...]]]}"},
+               "path": "{'start': [x, y, z], 'segs': [['L', x, y, z], ['A', mx, my, mz, x, y, z], ['S', [[x, y, z], ...]], ['H', cx, cy, cz, ax, ay, az, pitch, height]]}"},
               {"frenet": "true: the profile follows the path's curvature frame (helices); default keeps its orientation smoothly"},
               "Profile swept along a 3D path (pipes, rails, handles, bent tubes); as base or later feature."),
     "sweep_cut": ({"outline": "", "nx": "", "ny": "", "nz": "", "off": "", "path": ""}, {"frenet": ""}, "Removes a swept solid (channels, grooves along a path)."),
     "chamfer_edges": ({"size": "size"}, {"pts": "", "nx": "", "ny": "", "nz": "", "at": "", "ax": "", "ay": "", "az": ""},
                       "Chamfers chosen edges, selected like fillet_edges."),
+    "draft": ({"angle": "draft angle in degrees; positive narrows the part along the pull direction"},
+              {"ax": "", "ay": "", "az": "pull direction (default +Z)", "off": "neutral plane position along it (0)",
+               "pts": "a point on each face to draft (default: every planar and cylindrical face parallel to the pull)"},
+              "Tilts side faces about their line on the neutral plane (cast and moulded parts)."),
+    "offset": ({"t": "distance: positive grows the whole part, negative shrinks it"}, {}, "Offsets every face of the part, rounding convex edges."),
+    "profile_intersect": ({"outline": "", "nx": "", "ny": "", "nz": ""}, {"off": "plane position (0)", "depth": "total, symmetric (omit: through all)"},
+                          "Keeps only the part inside the outline extruded both ways from an origin plane (two-view parts, trims)."),
+    "split": ({"nx": "normal of the cutting plane: the side kept", "ny": "", "nz": "", "off": "plane position along it"}, {},
+              "Cuts the part with an origin plane and keeps the side the normal points to."),
+    "thicken": ({"sections": "list of {'off', 'curve'}: open curves on parallel planes, at least 2", "nx": "", "ny": "", "nz": "",
+                 "t": "sheet thickness"},
+                {"ruled": "", "ax": "", "ay": "", "az": "side the thickness goes to (default: the surface's normal)"},
+                "Sheet of thickness t through open curves (panels, blades, curved walls); as base or later feature (adds)."),
+    "thread": ({"r": "major radius (external) or bore radius (internal)", "pitch": "pitch; negative: left-handed", "length": "thread length"},
+               {"x": "", "y": "", "z": "start point on the axis (0, 0, 0)", "ax": "", "ay": "", "az": "axis (default +Z)",
+                "internal": "true: thread in a bore of radius r", "depth": "thread depth (0.6134 * pitch)"},
+               "Cuts a 60-degree V thread (helical groove) into an existing shaft or bore."),
+    "text": ({"text": "the characters", "size": "font height", "x": "", "y": ""},
+             {"h": "emboss height", "depth": "engrave depth (one of h, depth)", "font": "font name (Arial)",
+              "font_path": "a .ttf/.otf file (for the same result on every machine)", "rotation": "degrees about the face normal"},
+             "Embossed or engraved text centred at (x, y) on a face."),
+    "profile_project": ({"outline": "", "nx": "", "ny": "", "nz": "", "off": ""}, {"h": "emboss height", "depth": "engrave depth (one of h, depth)"},
+                        "Projects an outline along -(nx, ny, nz) onto the curved or flat faces it meets first, then embosses or engraves it."),
 }
 
 CONVENTIONS = [
@@ -89,6 +121,25 @@ CONVENTIONS = [
     "of segments, starting at the corresponding point, so the surface does not twist. Curved bodies: 8-20 sections.",
     "Sweep: the profile outline lies on the plane normal to (nx, ny, nz) at off, and should be centred on the path's "
     "start, with the path leaving that plane along its normal. Paths: lines, three-point arcs, splines through points.",
+    "Taper (bosses, pockets): a draft angle in degrees on the extrusion; positive narrows it away from the face "
+    "(bosses outward, pockets inward). until = 'next' | 'last' replaces h or depth: a boss fills the free space up to "
+    "the first material it meets (next) or up to the far side of the last (last); a pocket removes the first piece of "
+    "material it meets (next: through the first wall) or all of it (last). A boss that meets nothing is an error.",
+    "Holes: blind with depth (tip: a drill point of tip degrees below it); hole_cb (counterbore cbr, cbd) and hole_cs "
+    "(countersink radius csr at the face, included angle) start from a face, not an origin plane. Patterns repeat them.",
+    "Draft, offset, profile_intersect and split change the whole part (patterns cannot repeat them). split keeps the "
+    "side of the plane its normal points to (nz = -1, off = 10 keeps z <= 10).",
+    "Thicken: like loft, but each section has an open 'curve' (same segments as an outline, not closed); the sheet "
+    "is t thick, to the side (ax, ay, az) if given.",
+    "Paths also take helices: ['H', cx, cy, cz, ax, ay, az, pitch, height] from the current point about the axis "
+    "through (cx, cy, cz) along (ax, ay, az) (radius: the point's distance from it); pitch < 0 is left-handed. "
+    "Sweep a profile along a helix with frenet = true (springs, coils). Screw threads: use thread.",
+    "Thread: cuts the groove into material that exists (a shaft of radius r, or the wall of a bore of radius r), from "
+    "(x, y, z) on the axis for length; the profile is a 60-degree V of depth 0.6134 * pitch unless depth is given.",
+    "Text reads from outside the face; up is +Y on top and bottom faces and +Z on side faces. Glyph shapes depend on the "
+    "font installed; give font_path for identical parts on every machine.",
+    "profile_project: the outline lies on an origin plane beside the part (nx, ny, nz pointing away from it, at off) and "
+    "is projected back along -(nx, ny, nz); h or depth goes along the surface normal.",
     "One goal is one solid part; several separate solids are several goals.",
 ]
 
@@ -123,7 +174,7 @@ def _point(p) -> bool:
     return isinstance(p, (list, tuple)) and len(p) == 3 and all(_num(c) for c in p)
 
 
-def _closed(outline) -> str | None:
+def _closed(outline, closed: bool = True) -> str | None:
     if not isinstance(outline, dict) or not isinstance(outline.get("start"), (list, tuple)) or len(outline["start"]) != 2:
         return "outline needs 'start': [u, v]"
     segs = outline.get("segs")
@@ -142,7 +193,7 @@ def _closed(outline) -> str | None:
             last = list(s[1][-1])
         else:
             return f"bad segment {s!r}"
-    if abs(last[0] - outline["start"][0]) > 1e-6 or abs(last[1] - outline["start"][1]) > 1e-6:
+    if closed and (abs(last[0] - outline["start"][0]) > 1e-6 or abs(last[1] - outline["start"][1]) > 1e-6):
         return "outline is not closed: the last point must equal 'start'"
     return None
 
@@ -158,9 +209,12 @@ def _path(path) -> str | None:
         ok = isinstance(sg, (list, tuple)) and sg and (
             (sg[0] == "L" and len(sg) == 4 and all(_num(c) for c in sg[1:]))
             or (sg[0] == "A" and len(sg) == 7 and all(_num(c) for c in sg[1:]))
-            or (sg[0] == "S" and len(sg) == 2 and isinstance(sg[1], list) and sg[1] and all(_point(q) for q in sg[1])))
+            or (sg[0] == "S" and len(sg) == 2 and isinstance(sg[1], list) and sg[1] and all(_point(q) for q in sg[1]))
+            or (sg[0] == "H" and len(sg) == 9 and all(_num(c) for c in sg[1:]) and sg[7] != 0 and sg[8] > 0
+                and any(c != 0 for c in sg[4:7])))
         if not ok:
-            return f"bad segment {sg!r}: use ['L', x, y, z], ['A', mx, my, mz, x, y, z] or ['S', [[x, y, z], ...]]"
+            return (f"bad segment {sg!r}: use ['L', x, y, z], ['A', mx, my, mz, x, y, z], ['S', [[x, y, z], ...]] or "
+                    "['H', cx, cy, cz, ax, ay, az, pitch (not 0), height (> 0)]")
     return None
 
 
@@ -191,14 +245,16 @@ def validate_goal(goal: dict) -> dict:
             continue
         if i == 0 and k not in BASE_KINDS:
             errors.append(f"{where}: the first feature must be a base ({', '.join(BASE_KINDS)})")
-        if i > 0 and k in BASE_KINDS and k != "profile_revolve":
+        if i > 0 and k in BASE_KINDS and k not in ("profile_revolve", "loft", "sweep", "thicken"):
             errors.append(f"{where}: a base kind can only be the first feature")
         for r in KINDS[k][0]:
+            if r in ("h", "depth") and k in EXTRUDED and "until" in p:
+                continue
             if r not in p:
                 errors.append(f"{where}: missing '{r}'")
             elif r not in NON_NUMERIC and not _num(p[r]):
                 errors.append(f"{where}: '{r}' must be a number")
-        for key in ("w", "d", "h", "r", "ri", "ro", "depth", "size", "t", "length"):
+        for key in ("w", "d", "h", "r", "ri", "ro", "depth", "size", "length", "cbr", "cbd", "csr") + (("t",) if k != "offset" else ()):
             if key in p and _num(p[key]) and p[key] <= 0:
                 errors.append(f"{where}: '{key}' must be positive")
         if "ri" in p and "ro" in p and _num(p["ri"]) and _num(p["ro"]) and p["ri"] >= p["ro"]:
@@ -209,6 +265,55 @@ def validate_goal(goal: dict) -> dict:
             bad = _closed(p["outline"])
             if bad:
                 errors.append(f"{where}: {bad}")
+        if k == "offset" and _num(p.get("t")) and p["t"] == 0:
+            errors.append(f"{where}: 't' must not be 0")
+        if "until" in p:
+            if k not in EXTRUDED:
+                errors.append(f"{where}: 'until' is for bosses and pockets ({', '.join(EXTRUDED)})")
+            elif p["until"] not in ("next", "last"):
+                errors.append(f"{where}: 'until' must be 'next' or 'last'")
+            elif "taper" in p:
+                errors.append(f"{where}: 'taper' and 'until' cannot be combined")
+        if "taper" in p:
+            if k not in EXTRUDED:
+                errors.append(f"{where}: 'taper' is for bosses and pockets ({', '.join(EXTRUDED)})")
+            elif not _num(p["taper"]) or abs(p["taper"]) >= 90:
+                errors.append(f"{where}: 'taper' must be a number of degrees between -90 and 90")
+            elif "off" in p or (k == "profile_pocket" and "depth" not in p):
+                errors.append(f"{where}: 'taper' needs a face to start from and a height or depth")
+        for key in ("tip", "angle"):
+            if key in p and k in ("hole", "hole_std", "hole_cb", "hole_cs", "draft") and _num(p[key]):
+                if k == "draft" and not (-90 < p[key] < 90):
+                    errors.append(f"{where}: 'angle' must be between -90 and 90 degrees")
+                elif k != "draft" and not (0 < p[key] < 180):
+                    errors.append(f"{where}: '{key}' must be between 0 and 180 degrees")
+        if "tip" in p and "depth" not in p:
+            errors.append(f"{where}: 'tip' needs 'depth' (a blind hole)")
+        if k in ("hole_cb", "hole_cs") and "off" in p:
+            errors.append(f"{where}: {k} starts from a face, not an origin plane (off)")
+        for big in ("cbr", "csr"):
+            if big in p and _num(p[big]) and _num(p.get("r")) and p[big] <= p["r"]:
+                errors.append(f"{where}: '{big}' must exceed 'r'")
+        if k == "hole_cb" and _num(p.get("cbd")) and _num(p.get("depth")) and p["depth"] <= p["cbd"]:
+            errors.append(f"{where}: 'depth' must exceed 'cbd'")
+        if k in ("text", "profile_project") and ("h" in p) == ("depth" in p):
+            errors.append(f"{where}: give one of 'h' (emboss) or 'depth' (engrave)")
+        if k == "text" and (not isinstance(p.get("text"), str) or not p["text"].strip()):
+            errors.append(f"{where}: 'text' must be a non-empty string")
+        if k == "thread" and _num(p.get("pitch")) and p["pitch"] == 0:
+            errors.append(f"{where}: 'pitch' must not be 0")
+        if k == "thicken" and "sections" in p:
+            secs = p["sections"]
+            if not isinstance(secs, list) or len(secs) < 2:
+                errors.append(f"{where}: 'sections' must be a list of at least 2 sections")
+            else:
+                for j, sec in enumerate(secs):
+                    if not isinstance(sec, dict) or not _num(sec.get("off")):
+                        errors.append(f"{where}: section {j + 1} needs a numeric 'off'")
+                        continue
+                    bad = _closed(sec.get("curve"), closed=False)
+                    if bad:
+                        errors.append(f"{where}: section {j + 1}: {bad.replace('outline', 'curve')}")
         if k in ("loft", "loft_cut") and "sections" in p:
             secs = p["sections"]
             if not isinstance(secs, list) or len(secs) < 2:
@@ -244,7 +349,7 @@ def validate_goal(goal: dict) -> dict:
             prev = feats[i - 1].get("kind") if i > 0 and isinstance(feats[i - 1], dict) else None
             if prev in PATTERN_KINDS:
                 errors.append(f"{where}: a pattern of a pattern is not supported; repeat the original feature instead")
-            elif prev in ("fillet_top", "fillet_vertical", "chamfer_top", "shell", "fillet_edges", "chamfer_edges"):
+            elif prev in DRESSUPS:
                 errors.append(f"{where}: patterns repeat a boss, hole, pocket or revolve, not a {prev}")
             elif prev in BASE_KINDS:
                 warnings.append(f"{where}: repeats the base")
