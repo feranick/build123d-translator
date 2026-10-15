@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "build123d-translator"
-version = "2026.10.15.1"
+version = "2026.10.15.2"
 description = "Goals (ordered CAD features with dimensions) to build123d solids, STEP files and scripts; checker and MCP server"
 readme = "README.md"
 requires-python = ">=3.10"

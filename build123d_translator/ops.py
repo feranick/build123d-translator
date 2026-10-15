@@ -1,5 +1,5 @@
 """ops.py — goal features as build123d operations.
-Version: 2026.10.15.1
+Version: 2026.10.15.2
 
 `Builder` turns the features of a goal, in order, into one solid. Each feature kind is a
 method with the goal's parameters as keyword arguments, so a goal reads as a script:
@@ -25,10 +25,6 @@ import math
 from build123d import (Axis, Cylinder, Edge, Face, GeomType, Kind, Location, Plane,
                        RegularPolygon, Solid, Vector, Wire, extrude, offset)
 from OCP.BRep import BRep_Tool
-from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
-from OCP.TopExp import TopExp
-from OCP.TopoDS import TopoDS
-from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
 
 NORMAL_KEYS = ("nx", "ny", "nz")
 AXIS_KEYS = ("ax", "ay", "az")
@@ -96,33 +92,26 @@ def pick_face(shape, k: int, sign: float, at=None):
     return min(cands, key=lambda f: (round(f.distance_to(q), 6), -round(f.area, 6)))
 
 
-def _ancestors(shape, sub, anc):
-    m = TopTools_IndexedDataMapOfShapeListOfShape()
-    TopExp.MapShapesAndAncestors_s(shape.wrapped, sub, anc, m)
-    return m
-
-
-def is_seam(shape, edge, amap=None) -> bool:
-    """True for a seam edge (the closing edge of a cylinder or cone): fillets skip it."""
-    m = amap or _ancestors(shape, TopAbs_EDGE, TopAbs_FACE)
-    i = m.FindIndex(edge.wrapped)
-    if i == 0:
-        return False
-    for f in m.FindFromIndex(i):
-        if BRep_Tool.IsClosed_s(edge.wrapped, TopoDS.Face_s(f)):
-            return True
-    return False
+def seam_edges(shape) -> list:
+    """Seam edges (the closing edge of a cylinder or cone, closed on its own face): fillets skip them.
+    Only basic OCP calls, so it works across OCP builds."""
+    out = []
+    for f in shape.faces():
+        for e in f.edges():
+            if BRep_Tool.IsClosed_s(e.wrapped, f.wrapped) and not any(e.is_same(x) for x in out):
+                out.append(e)
+    return out
 
 
 def straight_edges_along(shape, k: int) -> list:
     """Straight edges parallel to axis k, seams excluded."""
-    amap = _ancestors(shape, TopAbs_EDGE, TopAbs_FACE)
+    seams = seam_edges(shape)
     out = []
     for e in shape.edges():
         if e.geom_type != GeomType.LINE:
             continue
         t = e.tangent_at(0)
-        if abs(abs((t.X, t.Y, t.Z)[k]) - 1) < 1e-6 and not is_seam(shape, e, amap):
+        if abs(abs((t.X, t.Y, t.Z)[k]) - 1) < 1e-6 and not any(e.is_same(x) for x in seams):
             out.append(e)
     return out
 

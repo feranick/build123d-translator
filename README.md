@@ -133,5 +133,7 @@ For any other goal file (the S 80, synthetic suites), `tools/freecad_reference.s
 
 | Component | Version |
 |---|---|
-| Package and all modules | 2026.10.15.1 |
-| Tested with | build123d 0.12.0, Python 3.10 |
+| Package | 2026.10.15.2 |
+| `ops.py` | 2026.10.15.2 (seam edges found per face with basic OCP calls; newer OCP builds no longer expose `TopTools_IndexedDataMapOfShapeListOfShape`) |
+| Other modules | 2026.10.15.1 |
+| Tested with | build123d 0.12.0, Python 3.10 (Linux) |
