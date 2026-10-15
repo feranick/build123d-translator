@@ -1,5 +1,5 @@
 """mcp_server.py — MCP server: lets LLM-based tools build CAD parts from goals with build123d.
-Version: 2026.10.15.1
+Version: 2026.10.16.1
 
 Tools (all JSON):
   goal_format      the goal format: kinds, parameters, conventions, an example. Read it first.
@@ -29,7 +29,8 @@ except ImportError:  # 1.x
     _V2 = False
 
 INSTRUCTIONS = """build123d-translator builds solid CAD parts from a goal: an ordered list of features with
-dimensions (a base, then bosses, holes, pockets, outlines, revolves, patterns, fillets...). The
+dimensions (a base, then bosses, holes, pockets, outlines, revolves, patterns, fillets, and lofts
+through cross-sections or sweeps along 3D paths for curved bodies). The
 translation is exact and fast (milliseconds to about a second per part).
 Workflow: call goal_format once and follow its conventions; write one goal per solid part;
 validate_goals and fix every error; build_parts. Results give the .step file and a standalone

@@ -1,5 +1,5 @@
 """ops.py — goal features as build123d operations.
-Version: 2026.10.15.4
+Version: 2026.10.16.1
 
 `Builder` turns the features of a goal, in order, into one solid. Each feature kind is a
 method with the goal's parameters as keyword arguments, so a goal reads as a script:
@@ -163,6 +163,31 @@ def outline_face(outline: dict, k: int, c: float) -> Face:
             raise BuildError(f"unknown outline segment {seg[0]!r}")
         cur = end
     return Face(Wire(edges))
+
+
+def path_wire(path: dict) -> Wire:
+    """3D path {'start': [x, y, z], 'segs': [['L', x, y, z], ['A', mx, my, mz, x, y, z],
+    ['S', [[x, y, z], ...]]]} (open or closed) as a wire."""
+    cur = Vector(*path["start"])
+    edges = []
+    for seg in path["segs"]:
+        if seg[0] == "L":
+            end = Vector(*seg[1:4])
+            edges.append(Edge.make_line(cur, end))
+        elif seg[0] == "A":
+            mid, end = Vector(*seg[1:4]), Vector(*seg[4:7])
+            if (mid - cur).cross(end - cur).length < 1e-9:
+                edges.append(Edge.make_line(cur, end))
+            else:
+                edges.append(Edge.make_three_point_arc(cur, mid, end))
+        elif seg[0] == "S":
+            pts = [cur] + [Vector(*q) for q in seg[1]]
+            end = pts[-1]
+            edges.append(Edge.make_spline(pts, parameters=_chord_params(pts)))
+        else:
+            raise BuildError(f"unknown path segment {seg[0]!r}")
+        cur = end
+    return Wire(edges)
 
 
 def circle_face(k: int, c: float, u: float, v: float, r: float) -> Face:
@@ -342,6 +367,53 @@ class Builder:
     def profile_groove(self, outline, **p):
         self._combine(self._revolved(outline, p), "sub")
 
+    # -- loft and sweep (curved bodies) --
+    def _add_or_base(self, tool, op: str):
+        if self.part is None:
+            if op != "add":
+                raise BuildError("the first feature must add material")
+            self._set(tool, tool, "add")
+        else:
+            self._combine(tool, op)
+
+    @staticmethod
+    def _lofted(sections, ruled, p):
+        k, _ = normal_of(p)
+        if len(sections) < 2:
+            raise BuildError("a loft needs at least two sections")
+        wires = [outline_face(sec["outline"], k, float(sec["off"])).outer_wire()
+                 for sec in sorted(sections, key=lambda sec: float(sec["off"]))]
+        try:
+            return Solid.make_loft(wires, bool(ruled))
+        except Exception as exc:  # noqa: BLE001
+            raise BuildError(f"the loft failed in the kernel ({type(exc).__name__}): sections that twist "
+                             "or cross, or very different outlines?") from exc
+
+    def loft(self, sections, ruled=False, **p):
+        self._add_or_base(self._lofted(sections, ruled, p), "add")
+
+    def loft_cut(self, sections, ruled=False, **p):
+        self._add_or_base(self._lofted(sections, ruled, p), "sub")
+
+    @staticmethod
+    def _swept(outline, path, p):
+        k, _ = normal_of(p)
+        face = outline_face(outline, k, float(p.get("off", 0.0)))
+        try:
+            s = Solid.sweep(face, path_wire(path), is_frenet=bool(p.get("frenet", False)))
+        except Exception as exc:  # noqa: BLE001
+            raise BuildError(f"the sweep failed in the kernel ({type(exc).__name__}): a path that turns "
+                             "tighter than the profile, or a profile not at the path's start?") from exc
+        if s.volume <= 0:
+            raise BuildError("the sweep has no volume")
+        return s
+
+    def sweep(self, outline, path, **p):
+        self._add_or_base(self._swept(outline, path, p), "add")
+
+    def sweep_cut(self, outline, path, **p):
+        self._add_or_base(self._swept(outline, path, p), "sub")
+
     # -- patterns and mirror --
     def _copies(self, transforms):
         if self.last is None:
@@ -454,6 +526,14 @@ def goal_scale(features: list) -> float:
         return max(2 * p["r"], p["h"])
     if f["kind"] == "base_ring":
         return max(2 * p["ro"], p["h"])
+    if f["kind"] == "loft":
+        offs = [float(sec["off"]) for sec in p["sections"]]
+        exts = [goal_scale([{"kind": "profile_base", "params": {"outline": sec["outline"], "h": 0}}]) for sec in p["sections"]]
+        return max(max(exts), max(offs) - min(offs))
+    if f["kind"] == "sweep":
+        q = [p["path"]["start"]] + [s_[-3:] if s_[0] != "S" else s_[1][-1] for s_ in p["path"]["segs"]]
+        span = max(max(c[i] for c in q) - min(c[i] for c in q) for i in range(3))
+        return max(span, goal_scale([{"kind": "profile_base", "params": {"outline": p["outline"], "h": 0}}]))
     pts = [p["outline"]["start"]]
     for s in p["outline"]["segs"]:
         pts += s[1] if s[0] == "S" else [s[-2:]]
@@ -492,4 +572,4 @@ def build_goal(goal: dict):
 KINDS = ("base_box", "base_cyl", "base_hex", "base_ring", "profile_base", "profile_revolve",
          "boss_cyl", "boss_box", "hole", "hole_std", "pocket_rect", "profile_boss", "profile_pocket",
          "profile_groove", "polar_pattern", "linear_pattern", "mirror", "fillet_top", "fillet_vertical",
-         "chamfer_top", "shell", "fillet_edges", "chamfer_edges")
+         "chamfer_top", "shell", "fillet_edges", "chamfer_edges", "loft", "loft_cut", "sweep", "sweep_cut")

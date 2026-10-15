@@ -8,6 +8,7 @@ right-handed revolves and patterns, polar angle only with an axis, linear spacin
 skipping seams) and the S 80 pump parts other than the casing.
 """
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -66,3 +67,53 @@ def test_api_build_writes_files(tmp_path, monkeypatch):
     assert r["parts"]["broken"]["built"] is False
     v = api.verify(goals["flange"], f["files"]["step"])
     assert v["iou"] > 0.99999
+
+
+# ---- loft and sweep (2026.10.16.1): exact volumes
+
+def _sq(c, a):  # square of side a centred at (c, c) in the plane's (u, v)
+    h = a / 2
+    return {"start": [c - h, c - h], "segs": [["L", c + h, c - h], ["L", c + h, c + h], ["L", c - h, c + h], ["L", c - h, c - h]]}
+
+
+def _circ(cu, cv, r):
+    return {"start": [cu + r, cv], "segs": [["A", cu, cv + r, cu - r, cv], ["A", cu, cv - r, cu + r, cv]]}
+
+
+def test_ruled_loft_is_a_frustum():
+    a, b, h = 40.0, 20.0, 30.0
+    g = {"features": [{"kind": "loft", "params": {"nz": 1, "ruled": True, "sections": [
+        {"off": 0, "outline": _sq(0, a)}, {"off": h, "outline": _sq(0, b)}]}}]}
+    solid, _ = T.build(g)
+    assert abs(solid.volume - h / 3 * (a * a + b * b + a * b)) < 1e-6 * solid.volume
+
+
+def test_sweep_along_quarter_arc_is_a_quarter_torus():
+    R, r = 50.0, 5.0  # circle of radius r in the XZ plane at (R, 0, 0), swept a quarter turn about Z
+    g = {"features": [{"kind": "sweep", "params": {
+        "nx": 0, "ny": 1, "nz": 0, "off": 0, "outline": _circ(R, 0, r),
+        "path": {"start": [R, 0, 0], "segs": [["A", R * 0.7071067811865476, R * 0.7071067811865476, 0, 0, R, 0]]}}}]}
+    solid, _ = T.build(g)
+    assert abs(solid.volume - math.pi * r * r * (math.pi * R / 2)) < 1e-4 * solid.volume
+
+
+def test_loft_cut_and_validation():
+    g = {"features": [{"kind": "base_box", "params": {"w": 60, "d": 60, "h": 20}},
+                      {"kind": "loft_cut", "params": {"nz": 1, "ruled": True, "sections": [
+                          {"off": 5, "outline": _sq(0, 10)}, {"off": 25, "outline": _sq(0, 30)}]}}]}
+    solid, _ = T.build(g)
+    side = lambda z: 10 + (z - 5)  # side length grows 1 per mm from z=5 (10) to z=25 (30)
+    cut = sum(side(5 + (i + 0.5) * 15 / 10000) ** 2 * 15 / 10000 for i in range(10000))  # z 5..20 inside the box
+    assert abs(solid.volume - (72000 - cut)) < 1e-3 * 72000
+    bad = {"features": [{"kind": "loft", "params": {"nz": 1, "sections": [{"off": 0, "outline": _sq(0, 5)}]}}]}
+    assert "at least 2" in " ".join(validate_goal(bad)["errors"])
+
+
+def test_car_body_example_and_script():
+    goal = json.loads((Path(__file__).parents[1] / "examples" / "car_body.json").read_text())["car_body"]
+    assert validate_goal(goal)["ok"]
+    solid, _ = T.build(goal)
+    assert solid.is_valid and 5.9e9 < solid.volume < 6.1e9
+    ns = {"__name__": "not_main"}
+    exec(compile(T.script("car_body", goal), "car_body.py", "exec"), ns)  # noqa: S102
+    assert T.iou(ns["part"], solid) > 0.999999

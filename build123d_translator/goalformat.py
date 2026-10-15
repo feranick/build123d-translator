@@ -1,5 +1,5 @@
 """goalformat.py — the goal format: kinds, conventions, an example, and static validation.
-Version: 2026.10.15.1
+Version: 2026.10.16.1
 
 A goal file is {name: goal}; a goal is {"features": [{"kind": ..., "params": {...}}, ...]},
 one solid part, features in build order, lengths in mm. The format is the one of the
@@ -7,7 +7,8 @@ Taiga goal files, so goals carry over between the two tools unchanged.
 """
 from __future__ import annotations
 
-BASE_KINDS = ("base_box", "base_cyl", "base_hex", "base_ring", "profile_base", "profile_revolve")
+BASE_KINDS = ("base_box", "base_cyl", "base_hex", "base_ring", "profile_base", "profile_revolve", "loft", "sweep")
+NON_NUMERIC = ("outline", "sections", "path")
 PATTERN_KINDS = ("polar_pattern", "linear_pattern", "mirror")
 SKETCHED_PLACEABLE = ("boss_cyl", "boss_box", "hole", "hole_std", "pocket_rect", "profile_boss", "profile_pocket")
 
@@ -45,6 +46,17 @@ KINDS = {
     "fillet_edges": ({"r": "radius"}, {"pts": "a point on each edge", "nx": "", "ny": "", "nz": "edge loop of the face with this normal",
                                        "at": "[x, y, z]: which such face", "ax": "", "ay": "", "az": "every straight edge parallel to this axis"},
                      "Fillets chosen edges: by points (pts), a face's outer edge loop (normal [+at]) or all edges along an axis."),
+    "loft": ({"sections": "list of {'off': position along the axis, 'outline': closed outline}, at least 2",
+              "nx": "axis the sections are normal to (one of nx, ny, nz = 1)", "ny": "", "nz": ""},
+             {"ruled": "true: straight between sections (default: smooth)"},
+             "Solid through cross-sections on parallel planes (car bodies, hulls, transitions, ducts); as base or later feature."),
+    "loft_cut": ({"sections": "", "nx": "", "ny": "", "nz": ""}, {"ruled": ""}, "Removes a lofted solid (scoops, tapered cavities)."),
+    "sweep": ({"outline": "closed profile on the plane normal to (nx, ny, nz) at off, centred on the path's start",
+               "nx": "profile plane normal", "ny": "", "nz": "", "off": "profile plane position",
+               "path": "{'start': [x, y, z], 'segs': [['L', x, y, z], ['A', mx, my, mz, x, y, z], ['S', [[x, y, z], ...]]]}"},
+              {"frenet": "true: the profile follows the path's curvature frame (helices); default keeps its orientation smoothly"},
+              "Profile swept along a 3D path (pipes, rails, handles, bent tubes); as base or later feature."),
+    "sweep_cut": ({"outline": "", "nx": "", "ny": "", "nz": "", "off": "", "path": ""}, {"frenet": ""}, "Removes a swept solid (channels, grooves along a path)."),
     "chamfer_edges": ({"size": "size"}, {"pts": "", "nx": "", "ny": "", "nz": "", "at": "", "ax": "", "ay": "", "az": ""},
                       "Chamfers chosen edges, selected like fillet_edges."),
 }
@@ -72,6 +84,11 @@ CONVENTIONS = [
     "Fillets, chamfers and shells must fit the material around them; holes and pockets need material around them.",
     "Selection by points (pts): a point on each edge (its midpoint is safest) or on each face; the nearest edge or "
     "face is used (within 2 % of the part's size). Avoid points where several edges meet.",
+    "Loft: sections on parallel planes normal to one axis (nx, ny, nz), each {'off': position, 'outline': ...} in "
+    "that plane's (u, v) convention; smooth through all sections unless ruled. Give every section the same number "
+    "of segments, starting at the corresponding point, so the surface does not twist. Curved bodies: 8-20 sections.",
+    "Sweep: the profile outline lies on the plane normal to (nx, ny, nz) at off, and should be centred on the path's "
+    "start, with the path leaving that plane along its normal. Paths: lines, three-point arcs, splines through points.",
     "One goal is one solid part; several separate solids are several goals.",
 ]
 
@@ -130,6 +147,23 @@ def _closed(outline) -> str | None:
     return None
 
 
+def _path(path) -> str | None:
+    """None if a 3D path is well formed, else what is wrong."""
+    if not isinstance(path, dict) or not _point(path.get("start")):
+        return "needs 'start': [x, y, z]"
+    segs = path.get("segs")
+    if not isinstance(segs, list) or not segs:
+        return "needs a non-empty 'segs' list"
+    for sg in segs:
+        ok = isinstance(sg, (list, tuple)) and sg and (
+            (sg[0] == "L" and len(sg) == 4 and all(_num(c) for c in sg[1:]))
+            or (sg[0] == "A" and len(sg) == 7 and all(_num(c) for c in sg[1:]))
+            or (sg[0] == "S" and len(sg) == 2 and isinstance(sg[1], list) and sg[1] and all(_point(q) for q in sg[1])))
+        if not ok:
+            return f"bad segment {sg!r}: use ['L', x, y, z], ['A', mx, my, mz, x, y, z] or ['S', [[x, y, z], ...]]"
+    return None
+
+
 def _unit(params, keys) -> bool | None:
     if not any(k in params for k in keys):
         return None
@@ -162,7 +196,7 @@ def validate_goal(goal: dict) -> dict:
         for r in KINDS[k][0]:
             if r not in p:
                 errors.append(f"{where}: missing '{r}'")
-            elif r != "outline" and not _num(p[r]):
+            elif r not in NON_NUMERIC and not _num(p[r]):
                 errors.append(f"{where}: '{r}' must be a number")
         for key in ("w", "d", "h", "r", "ri", "ro", "depth", "size", "t", "length"):
             if key in p and _num(p[key]) and p[key] <= 0:
@@ -175,6 +209,29 @@ def validate_goal(goal: dict) -> dict:
             bad = _closed(p["outline"])
             if bad:
                 errors.append(f"{where}: {bad}")
+        if k in ("loft", "loft_cut") and "sections" in p:
+            secs = p["sections"]
+            if not isinstance(secs, list) or len(secs) < 2:
+                errors.append(f"{where}: 'sections' must be a list of at least 2 sections")
+            else:
+                for j, sec in enumerate(secs):
+                    if not isinstance(sec, dict) or not _num(sec.get("off")):
+                        errors.append(f"{where}: section {j + 1} needs a numeric 'off'")
+                        continue
+                    bad = _closed(sec.get("outline"))
+                    if bad:
+                        errors.append(f"{where}: section {j + 1}: {bad}")
+                offs = [sec.get("off") for sec in secs if isinstance(sec, dict)]
+                if len(set(offs)) != len(offs):
+                    errors.append(f"{where}: two sections at the same 'off'")
+                counts = {len(sec["outline"]["segs"]) for sec in secs
+                          if isinstance(sec, dict) and isinstance(sec.get("outline"), dict) and isinstance(sec["outline"].get("segs"), list)}
+                if len(counts) > 1:
+                    warnings.append(f"{where}: sections have different numbers of segments ({sorted(counts)}); the surface may twist")
+        if k in ("sweep", "sweep_cut") and "path" in p:
+            bad = _path(p["path"])
+            if bad:
+                errors.append(f"{where}: path: {bad}")
         if _unit(p, ("nx", "ny", "nz")) is False:
             errors.append(f"{where}: nx, ny, nz must be one of +-1 and the others 0")
         if _unit(p, ("ax", "ay", "az")) is False:

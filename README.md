@@ -2,7 +2,7 @@
 
 Turns a **goal** (one solid part as an ordered list of CAD features with dimensions: a base, then bosses, holes, pockets, outlines, revolves, patterns, fillets, ...) into a [build123d](https://github.com/gumyr/build123d) solid, a STEP file and a standalone build123d script, deterministically and in milliseconds. It includes a checker (IoU between parts), a command line, a Python API and an MCP server, so LLM-based tools can design parts as goals and get exact geometry back.
 
-The goal format is the one of the Taiga decision model (`taiga-decision-model`), so goal files carry over unchanged; this project does not use Taiga or FreeCAD. Every feature follows the FreeCAD reference builder of that format, checked against it (below).
+The goal format is the one of the Taiga decision model (`taiga-decision-model`), so its goal files carry over unchanged (the translator adds lofts and sweeps, which Taiga does not have); this project does not use Taiga or FreeCAD. Every feature follows the FreeCAD reference builder of that format, checked against it (below).
 
 Why a translator: once a goal exists, there is nothing left to decide. Choosing a face or an edge in build123d is a geometric query computed from the goal, so a fixed translation is exact by construction, free, and faster than any model. The flexible part, turning a request ("a motor mount for a NEMA 17") into a goal, is what an LLM does well; the translator builds it, and the checker confirms it.
 
@@ -11,7 +11,7 @@ Why a translator: once a goal exists, there is nothing left to decide. Choosing 
 ```bash
 python -m venv .venv && source .venv/bin/activate      # Python 3.10+
 pip install -e ".[mcp,test]"                           # build123d, the MCP SDK, pytest
-pytest -q                                              # 31 tests, a few seconds
+pytest -q                                              # 35 tests, about 15 s
 ```
 
 build123d has wheels for Linux, macOS and Windows; no CAD application is needed.
@@ -83,6 +83,7 @@ A typical agent loop: read `goal_format`; turn the request into one goal per sol
 - **First feature is the base:** `base_box`, `base_cyl`, `base_hex`, `base_ring`, `profile_base` (any closed outline of lines, arcs and splines) or `profile_revolve` (a turned part).
 - **Sketched features** (`boss_cyl`, `boss_box`, `hole`, `hole_std`, `pocket_rect`, `profile_boss`, `profile_pocket`) go on the top face at `x`, `y`; on another face with its normal (`nx`, `ny`, `nz`) and centre `z`; on one of several faces with `at`; on an origin plane with `off`, extruded both ways (cross bores, windows, cavities).
 - **Revolve and groove** about an origin axis; **patterns and mirror** repeat the previous feature about or along an origin axis.
+- **Curved bodies** (2026.10.16.1): `loft` / `loft_cut` through cross-sections on parallel planes (smooth or ruled), `sweep` / `sweep_cut` of a profile along a 3D path of lines, arcs and splines; as base or later features, and repeatable with patterns and mirror. `examples/car_body.json` is a generic car body: a loft through 11 sections along X (a flat floor line and one spline over sides and roof each), with the four wheel arches cut (mirror across XZ), 1.4 s. These kinds are not in the Taiga goal format (FreeCAD's AdditiveLoft and AdditivePipe would be its counterparts), so they are checked against exact volumes instead (a ruled loft of two squares is a frustum; a circle swept a quarter turn is a quarter torus).
 - **Fillets and chamfers:** the top face's edge loop, all vertical edges, a face's edge loop, edges along an axis, or chosen edges by a point on each (`pts`); **shell** inward, open at the top face or at faces named by points.
 - **One goal per solid part.**
 
@@ -129,15 +130,16 @@ For any other goal file (the S 80, synthetic suites), `tools/freecad_reference.s
 | `build123d_translator/mcp_server.py` | `b3dt-mcp` MCP server |
 | `tests/` | Tests and the FreeCAD references |
 | `tools/compare_freecad.py`, `tools/freecad_reference.sh` | Comparison with FreeCAD at scale |
-| `examples/parts.json`, `examples/s80_goals.json` | A bracket, a motor flange, a spacer, a cover plate; the S 80 pump parts |
+| `examples/parts.json`, `examples/s80_goals.json`, `examples/car_body.json` | A bracket, a motor flange, a spacer, a cover plate; the S 80 pump parts; a generic car body (loft) |
 | `examples/pillow_block/` | A three-part pillow block (base, bearing housing, end cap), with a README on building, running and editing the scripts |
 
 ## Versions
 
 | Component | Version |
 |---|---|
-| Package | 2026.10.15.4 |
-| `ops.py` | 2026.10.15.4 (booleans through OpenCascade directly, faces merged on a copy and kept only if the result stays valid: build123d's `clean()` broke solids fused across shared faces and changed them in place; an invalid result is healed with `fix()`; seam edges found with basic OCP calls, since newer OCP builds no longer expose `TopTools_IndexedDataMapOfShapeListOfShape`) |
+| Package | 2026.10.16.1 |
+| `ops.py`, `goalformat.py`, `mcp_server.py` | 2026.10.16.1 (`loft`, `loft_cut`, `sweep`, `sweep_cut`) |
+| `ops.py` (before) | 2026.10.15.4 (booleans through OpenCascade directly, faces merged on a copy and kept only if the result stays valid: build123d's `clean()` broke solids fused across shared faces and changed them in place; an invalid result is healed with `fix()`; seam edges found with basic OCP calls, since newer OCP builds no longer expose `TopTools_IndexedDataMapOfShapeListOfShape`) |
 | `translate.py` | 2026.10.15.3 (IoU robust to coincident faces: when the plain intersection fails or comes back partial, one part is moved by a tiny step along skew directions and the intersection extrapolated to zero step) |
 | `api.py`, `tools/compare_freecad.py` | 2026.10.15.2 (the other part's bbox in comparisons; mismatches saved with their FreeCAD parts) |
 | Other modules | 2026.10.15.1 |
