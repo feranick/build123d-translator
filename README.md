@@ -130,6 +130,7 @@ For any other goal file (the S 80, synthetic suites), `tools/freecad_reference.s
 | `tests/` | Tests and the FreeCAD references |
 | `tools/compare_freecad.py`, `tools/freecad_reference.sh` | Comparison with FreeCAD at scale |
 | `examples/parts.json`, `examples/s80_goals.json` | A bracket, a motor flange, a spacer, a cover plate; the S 80 pump parts |
+| `examples/pillow_block/` | A three-part pillow block (base, bearing housing, end cap), with a README on building, running and editing the scripts |
 
 ## Versions
 
