@@ -1,5 +1,5 @@
 """ops.py — goal features as build123d operations.
-Version: 2026.10.15.3
+Version: 2026.10.15.4
 
 `Builder` turns the features of a goal, in order, into one solid. Each feature kind is a
 method with the goal's parameters as keyword arguments, so a goal reads as a script:
@@ -180,6 +180,35 @@ def prism(face: Face, k: int, start: float, length: float, sign: float):
     return Solid.extrude(f, unit(k, sign * length))
 
 
+def boolean(part, tool, op: str):
+    """part + tool (op "add") or part - tool ("sub") with OpenCascade's boolean, then merges the
+    faces split by the boolean (as build123d's clean()). Merging can break a valid result on shared
+    faces (two half-disks fused across their diameter), so its result is kept only if it stays
+    valid with the same volume."""
+    from build123d import Compound
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
+
+    o = (BRepAlgoAPI_Fuse if op == "add" else BRepAlgoAPI_Cut)(part.wrapped, tool.wrapped)
+    if not o.IsDone():
+        raise BuildError("the kernel's boolean operation failed")
+    raw = Compound(o.Shape())
+    solids = raw.solids()
+    res = solids[0] if len(solids) == 1 else raw
+    try:
+        from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
+        from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
+
+        # on a deep copy: the merge changes the shapes it shares with its input in place
+        u = ShapeUpgrade_UnifySameDomain(BRepBuilderAPI_Copy(res.wrapped).Shape(), True, True, True)
+        u.Build()
+        cleaned = type(res)(u.Shape())
+        if cleaned.is_valid and len(cleaned.solids()) == len(solids) and abs(cleaned.volume - res.volume) <= 1e-6 * max(res.volume, 1e-9):
+            res = cleaned
+    except Exception:  # noqa: BLE001
+        pass
+    return res
+
+
 def single_solid(shape):
     solids = shape.solids()
     if len(solids) != 1:
@@ -214,8 +243,7 @@ class Builder:
 
     def _combine(self, tool, op: str):
         part = self._need_part()
-        res = part + tool if op == "add" else part - tool
-        self._set(res, tool, op)
+        self._set(boolean(part, tool, op), tool, op)
 
     def _placement(self, p: dict):
         """(axis k, sign, plane coordinate c, datum) for a sketched feature."""
@@ -265,7 +293,7 @@ class Builder:
         self._set(s, s, "add")
 
     def base_ring(self, ri, ro, h):
-        s = Solid.make_cylinder(ro, h) - Solid.make_cylinder(ri, h)
+        s = boolean(Solid.make_cylinder(ro, h), Solid.make_cylinder(ri, h), "sub")
         self._set(s, s, "add")
 
     def profile_base(self, outline, h, **_):
@@ -324,7 +352,7 @@ class Builder:
         part = self._need_part()
         copies = [t(tool) for t in transforms]
         for cpy in copies:
-            part = part + cpy if op == "add" else part - cpy
+            part = boolean(part, cpy, op)
         self._set(part, tool, op, pattern=True)
 
     def polar_pattern(self, n, **p):

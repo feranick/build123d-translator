@@ -1,5 +1,5 @@
 """translate.py — goals to solids, scripts and files; the checker.
-Version: 2026.10.15.2
+Version: 2026.10.15.3
 
     build(goal)                    -> (solid, seconds per feature)
     script(name, goal)             -> a standalone build123d script that rebuilds the part
@@ -79,57 +79,48 @@ def load(path) -> object:
     return ops.single_solid(shape)
 
 
-def _vol(shape) -> float:
-    return shape.volume if shape is not None else 0.0
+def _common(a, b, shift=None) -> float | None:
+    """Volume of a & b with OpenCascade's boolean (b moved by `shift` first); None on failure."""
+    from build123d import Compound, Location
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
 
-
-def _fuzzy_common(a, b, fuzzy: float) -> float | None:
-    """Volume of a & b with OpenCascade's fuzzy boolean (tolerates nearly coincident faces)."""
     try:
-        from build123d import Compound
-        from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
-        from OCP.TopTools import TopTools_ListOfShape
-
-        args, tools = TopTools_ListOfShape(), TopTools_ListOfShape()
-        args.Append(a.wrapped)
-        tools.Append(b.wrapped)
-        op = BRepAlgoAPI_Common()
-        op.SetArguments(args)
-        op.SetTools(tools)
-        op.SetFuzzyValue(fuzzy)
-        op.Build()
+        bb = b.moved(Location(shift)) if shift else b
+        op = BRepAlgoAPI_Common(a.wrapped, bb.wrapped)
         return Compound(op.Shape()).volume if op.IsDone() else None
-    except Exception:  # noqa: BLE001 (API missing in this OCP build, or the boolean failed)
+    except Exception:  # noqa: BLE001
         return None
 
 
+SKEW = ((0.31, 0.53, 0.79), (-0.67, 0.45, 0.59), (0.58, -0.71, 0.40))
+
+
 def _intersection(a, b, va: float, vb: float) -> float:
-    """Volume of the intersection. The plain boolean can fail on two nearly identical solids
-    (coincident faces) and return nothing; then the two cuts are tried (they must agree), then a
-    fuzzy boolean."""
-    hi = min(va, vb) * (1 + 1e-6)
-    try:
-        v = _vol(a & b)
-    except Exception:  # noqa: BLE001
-        v = None
-    ba, bb = a.bounding_box(), b.bounding_box()
-    lo = [max(p, q) for p, q in zip((ba.min.X, ba.min.Y, ba.min.Z), (bb.min.X, bb.min.Y, bb.min.Z))]
-    up = [min(p, q) for p, q in zip((ba.max.X, ba.max.Y, ba.max.Z), (bb.max.X, bb.max.Y, bb.max.Z))]
-    overlap = all(u > l for u, l in zip(up, lo))
-    suspicious = v is None or v < 0 or v > hi or (v < 1e-9 * hi and overlap)
-    if not suspicious:
-        return v
-    try:
-        i1, i2 = va - _vol(a - b), vb - _vol(b - a)
-        if 0 <= i1 <= hi and abs(i1 - i2) <= 1e-4 * max(va, vb):
-            return (i1 + i2) / 2
-    except Exception:  # noqa: BLE001
-        pass
+    """Volume of the intersection. Two equal parts built by different programs share their faces
+    exactly, and on coincident faces OpenCascade's booleans often fail: the intersection comes back
+    empty or partial (DeepCAD comparison: 40 of 6,762 equal pairs scored 0). Moving one part by a
+    tiny step (1e-5 and 2e-5 of its size, or 3e-6 and 6e-6, along up to three skew directions) separates the faces; the
+    intersection then shrinks linearly with the step, and extrapolating to zero recovers it.
+    Boolean failures only lose volume, so the largest estimate is kept (at most the smaller part)."""
+    hi = min(va, vb)
+    plain = _common(a, b)
+    best = min(plain, hi) if plain is not None and plain <= hi * 1.01 else 0.0
+    if best >= 0.9995 * hi:
+        return min(best, hi)
     scale = max(a.bounding_box().diagonal, b.bounding_box().diagonal)
-    f = _fuzzy_common(a, b, 1e-6 * scale)
-    if f is not None and 0 <= f <= hi:
-        return f
-    return v if v is not None and 0 <= v <= hi else 0.0
+    for d in SKEW:
+        for step in (1e-5, 3e-6):
+            e1 = _common(a, b, tuple(step * scale * c for c in d))
+            e2 = _common(a, b, tuple(2 * step * scale * c for c in d))
+            if e1 is None or e2 is None or e1 <= 0 or e2 <= 0:
+                continue
+            est = 2 * e1 - e2  # linear in the step: value at zero
+            if 0 <= est <= hi * (1 + 1e-4) and e2 <= e1 * (1 + 1e-6):
+                best = max(best, min(est, hi))
+                break
+        if best >= 0.9995 * hi:
+            break
+    return best
 
 
 def iou(a, b) -> float:
