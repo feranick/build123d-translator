@@ -1,5 +1,5 @@
 """api.py — what other programs and the MCP server call. JSON in, JSON out.
-Version: 2026.10.15.1
+Version: 2026.10.15.2
 
     goal_format()                         the goal format, for the caller to read
     validate(goals)                       static checks, no geometry
@@ -81,6 +81,8 @@ def _build_one(job: dict) -> dict:
             other = T.load(job["compare"])
             rec["iou"] = round(T.iou(solid, other), 6)
             rec["other_volume"] = round(other.volume, 3)
+            od = T.describe(other)
+            rec["other_bbox"], rec["other_bbox_min"], rec["other_valid"] = od["bbox"], od["bbox_min"], od["valid"]
         except Exception as exc:  # noqa: BLE001
             rec["iou"], rec["compare_error"] = 0.0, str(exc)[:500]
     return rec

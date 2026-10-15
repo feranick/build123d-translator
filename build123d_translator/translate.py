@@ -1,5 +1,5 @@
 """translate.py — goals to solids, scripts and files; the checker.
-Version: 2026.10.15.1
+Version: 2026.10.15.2
 
     build(goal)                    -> (solid, seconds per feature)
     script(name, goal)             -> a standalone build123d script that rebuilds the part
@@ -79,6 +79,59 @@ def load(path) -> object:
     return ops.single_solid(shape)
 
 
+def _vol(shape) -> float:
+    return shape.volume if shape is not None else 0.0
+
+
+def _fuzzy_common(a, b, fuzzy: float) -> float | None:
+    """Volume of a & b with OpenCascade's fuzzy boolean (tolerates nearly coincident faces)."""
+    try:
+        from build123d import Compound
+        from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+        from OCP.TopTools import TopTools_ListOfShape
+
+        args, tools = TopTools_ListOfShape(), TopTools_ListOfShape()
+        args.Append(a.wrapped)
+        tools.Append(b.wrapped)
+        op = BRepAlgoAPI_Common()
+        op.SetArguments(args)
+        op.SetTools(tools)
+        op.SetFuzzyValue(fuzzy)
+        op.Build()
+        return Compound(op.Shape()).volume if op.IsDone() else None
+    except Exception:  # noqa: BLE001 (API missing in this OCP build, or the boolean failed)
+        return None
+
+
+def _intersection(a, b, va: float, vb: float) -> float:
+    """Volume of the intersection. The plain boolean can fail on two nearly identical solids
+    (coincident faces) and return nothing; then the two cuts are tried (they must agree), then a
+    fuzzy boolean."""
+    hi = min(va, vb) * (1 + 1e-6)
+    try:
+        v = _vol(a & b)
+    except Exception:  # noqa: BLE001
+        v = None
+    ba, bb = a.bounding_box(), b.bounding_box()
+    lo = [max(p, q) for p, q in zip((ba.min.X, ba.min.Y, ba.min.Z), (bb.min.X, bb.min.Y, bb.min.Z))]
+    up = [min(p, q) for p, q in zip((ba.max.X, ba.max.Y, ba.max.Z), (bb.max.X, bb.max.Y, bb.max.Z))]
+    overlap = all(u > l for u, l in zip(up, lo))
+    suspicious = v is None or v < 0 or v > hi or (v < 1e-9 * hi and overlap)
+    if not suspicious:
+        return v
+    try:
+        i1, i2 = va - _vol(a - b), vb - _vol(b - a)
+        if 0 <= i1 <= hi and abs(i1 - i2) <= 1e-4 * max(va, vb):
+            return (i1 + i2) / 2
+    except Exception:  # noqa: BLE001
+        pass
+    scale = max(a.bounding_box().diagonal, b.bounding_box().diagonal)
+    f = _fuzzy_common(a, b, 1e-6 * scale)
+    if f is not None and 0 <= f <= hi:
+        return f
+    return v if v is not None and 0 <= v <= hi else 0.0
+
+
 def iou(a, b) -> float:
     """Volumetric IoU of two solids; 0 for missing or malformed ones (as the FreeCAD checker)."""
     if a is None or b is None:
@@ -86,10 +139,7 @@ def iou(a, b) -> float:
     va, vb = a.volume, b.volume
     if va <= 1e-9 or vb <= 1e-9:
         return 0.0
-    try:
-        inter = (a & b).volume
-    except Exception:  # noqa: BLE001 (boolean failure)
-        return 0.0
+    inter = _intersection(a, b, va, vb)
     union = va + vb - inter
     v = inter / union if union > 1e-9 else 0.0
     return 0.0 if (v < 0 or v > 1.001 or math.isnan(v)) else min(v, 1.0)

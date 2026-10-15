@@ -1,5 +1,5 @@
 """ops.py — goal features as build123d operations.
-Version: 2026.10.15.2
+Version: 2026.10.15.3
 
 `Builder` turns the features of a goal, in order, into one solid. Each feature kind is a
 method with the goal's parameters as keyword arguments, so a goal reads as a script:
@@ -450,7 +450,15 @@ def build_goal(goal: dict):
         except Exception as exc:  # noqa: BLE001
             raise BuildError(f"feature {i + 1} ({f['kind']}): {type(exc).__name__}: {exc}") from None
         times.append(time.perf_counter() - t0)
-    return single_solid(b.part), times
+    solid = single_solid(b.part)
+    if not solid.is_valid:  # booleans can leave small defects FreeCAD's builder repairs; heal them
+        try:
+            fixed = single_solid(solid.fix())
+            if fixed.is_valid:
+                solid = fixed
+        except Exception:  # noqa: BLE001
+            pass
+    return solid, times
 
 
 KINDS = ("base_box", "base_cyl", "base_hex", "base_ring", "profile_base", "profile_revolve",

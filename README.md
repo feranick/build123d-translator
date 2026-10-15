@@ -113,6 +113,8 @@ python tools/compare_freecad.py --goals ~/taiga-expanded-0013/deepcad_test/goals
     --freecad ~/taiga-expanded-0013/deepcad_test/teacher --log ~/taiga-expanded-0013/deepcad_test/teacher.log --workers 8
 ```
 
+First run (2026-10-15, carbonio, build123d 0.13 / OCP 8.0): 6,701 of 6,762 DeepCAD test goals (99.1 %) match FreeCAD at IoU ≥ 0.999 (1–5 features 99.3 %, 6–10 96.5 %, 11–20 100 %), at 10 ms per part median (180 ms for 11–20 features). Of the 61 mismatches, 33 had the same volume and IoU 0 (likely the plain intersection failing on nearly identical solids; the checker now retries with cuts and a fuzzy boolean), 24 an invalid or empty result (now healed where possible; to be confirmed by a rerun), 4 small real differences. The tool saves the mismatches with their FreeCAD parts in `<out>_mismatches/`, so they can be rerun or reproduced elsewhere.
+
 For any other goal file (the S 80, synthetic suites), `tools/freecad_reference.sh GOALS.json OUT_DIR` builds the FreeCAD parts first, on a machine with a Taiga work folder.
 
 ## Files
@@ -133,7 +135,9 @@ For any other goal file (the S 80, synthetic suites), `tools/freecad_reference.s
 
 | Component | Version |
 |---|---|
-| Package | 2026.10.15.2 |
-| `ops.py` | 2026.10.15.2 (seam edges found per face with basic OCP calls; newer OCP builds no longer expose `TopTools_IndexedDataMapOfShapeListOfShape`) |
+| Package | 2026.10.15.3 |
+| `ops.py` | 2026.10.15.3 (an invalid result is healed with `fix()`; seam edges found per face with basic OCP calls, since newer OCP builds no longer expose `TopTools_IndexedDataMapOfShapeListOfShape`) |
+| `translate.py` | 2026.10.15.2 (IoU: when the plain intersection fails on nearly identical solids, both cuts, then a fuzzy boolean) |
+| `api.py`, `tools/compare_freecad.py` | 2026.10.15.2 (the other part's bbox in comparisons; mismatches saved with their FreeCAD parts) |
 | Other modules | 2026.10.15.1 |
 | Tested with | build123d 0.12.0, Python 3.10 (Linux) |

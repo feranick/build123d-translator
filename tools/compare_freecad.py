@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """compare_freecad.py — the translator against the FreeCAD reference builder, goal by goal:
 IoU of the two parts, and the time each took.
-Version: 2026.10.15.1
+Version: 2026.10.15.2
 
     python tools/compare_freecad.py --goals GOALS.json --freecad DIR [--log teacher.log]
                                     [--workers 8] [--limit N] [--out compare.json]
@@ -95,13 +95,25 @@ def main() -> None:
         fc = f"{st.median(ft):13.2f} {pct(ft, 0.9):7.2f}" if ft else f"{'-':>13} {'-':>7}"
         print(f"{b:>9} {len(rs):6d} {m / len(rs):7.3f} {len(rs) - m - failed:9d} {failed:7d}"
               f" {st.median(bt) if bt else float('nan'):10.1f} {pct(bt, 0.9):7.1f} {fc}")
+    bad = [n for n, r in res.items() if r.get("iou", 0) < 0.999]
+    if bad:  # the mismatches with their FreeCAD parts, to reproduce elsewhere
+        import shutil
+        dump = Path(a.out).with_suffix("")
+        dump = dump.parent / (dump.name + "_mismatches")
+        dump.mkdir(parents=True, exist_ok=True)
+        (dump / "goals.json").write_text(json.dumps({n: goals[n] for n in bad}, indent=1))
+        (dump / "results.json").write_text(json.dumps({n: res[n] for n in bad}, indent=1))
+        for n in bad:
+            shutil.copy(fdir / f"{n}.step", dump / f"{n}.step")
+        print(f"\n{len(bad)} mismatches with their FreeCAD parts: {dump}/ (rerun: --goals {dump}/goals.json --freecad {dump})")
     worst = sorted((r.get("iou", 0), n) for n, r in res.items() if r.get("iou", 0) < 0.999)[:15]
     if worst:
         print("\nmismatches (lowest IoU first):")
         for v, n in worst:
             r = res[n]
             kinds = sorted({f["kind"] for f in goals[n]["features"]})
-            print(f"  {n}: IoU {v:.4f}  {r.get('why', '')} {r.get('error', '')[:120]}  kinds {','.join(kinds)}")
+            print(f"  {n}: IoU {v:.4f}  {r.get('why', '')} {r.get('error', '')[:100]}{r.get('compare_error', '')[:80]}"
+                  f"  vol {r.get('volume')} / FC {r.get('other_volume')}  kinds {','.join(kinds)}")
 
 
 if __name__ == "__main__":
