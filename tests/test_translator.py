@@ -1,6 +1,6 @@
 """Tests: every reference goal matches the FreeCAD reference builder (volume and bounding box),
 scripts rebuild the same part, validation catches bad goals, the API writes files.
-Version: 2026.10.15.1
+Version: 2026.10.16.1
 
 The references (tests/freecad_reference.json) were measured with the FreeCAD 1.1.3 reference
 builder of the goal format: probes for each convention (shell inward, hexagon corner on +X,

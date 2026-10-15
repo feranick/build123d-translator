@@ -1,0 +1,131 @@
+{
+ "pillow_base": {
+  "features": [
+   {
+    "kind": "base_box",
+    "params": {
+     "w": 100,
+     "d": 40,
+     "h": 10
+    }
+   },
+   {
+    "kind": "profile_pocket",
+    "params": {
+     "outline": {
+      "start": [
+       35,
+       -4
+      ],
+      "segs": [
+       [
+        "L",
+        41,
+        -4
+       ],
+       [
+        "A",
+        45,
+        0,
+        41,
+        4
+       ],
+       [
+        "L",
+        35,
+        4
+       ],
+       [
+        "A",
+        31,
+        0,
+        35,
+        -4
+       ]
+      ]
+     }
+    }
+   },
+   {
+    "kind": "mirror",
+    "params": {
+     "ax": 1,
+     "ay": 0,
+     "az": 0
+    }
+   }
+  ]
+ },
+ "bearing_housing": {
+  "features": [
+   {
+    "kind": "profile_revolve",
+    "params": {
+     "outline": {
+      "start": [
+       -15,
+       16
+      ],
+      "segs": [
+       [
+        "L",
+        15,
+        16
+       ],
+       [
+        "L",
+        15,
+        25
+       ],
+       [
+        "L",
+        -15,
+        25
+       ],
+       [
+        "L",
+        -15,
+        16
+       ]
+      ]
+     },
+     "ax": 1,
+     "ay": 0,
+     "az": 0,
+     "nx": 0,
+     "ny": 1,
+     "nz": 0,
+     "off": 0,
+     "x": 0,
+     "y": 0,
+     "z": 0
+    }
+   }
+  ]
+ },
+ "end_cap": {
+  "features": [
+   {
+    "kind": "base_cyl",
+    "params": {
+     "r": 25,
+     "h": 3
+    }
+   },
+   {
+    "kind": "hole",
+    "params": {
+     "r": 2.25,
+     "x": 20,
+     "y": 0
+    }
+   },
+   {
+    "kind": "polar_pattern",
+    "params": {
+     "n": 4
+    }
+   }
+  ]
+ }
+}
