@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "build123d-translator"
+version = "2026.10.15.1"
+description = "Goals (ordered CAD features with dimensions) to build123d solids, STEP files and scripts; checker and MCP server"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Nicola Ferralis", email = "ferralis@generalflash.com" }]
+dependencies = ["build123d>=0.9"]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+test = ["pytest"]
+
+[project.scripts]
+b3dt = "build123d_translator.cli:main"
+b3dt-mcp = "build123d_translator.mcp_server:main"
+
+[tool.setuptools]
+packages = ["build123d_translator"]
