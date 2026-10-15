@@ -102,7 +102,7 @@ The meaning of each feature was measured on the FreeCAD 1.1.3 reference builder 
 | Holes, pockets through all | from the face into the material only; both ways on an origin plane | the same |
 | Splines | interpolated through the points, chord-length parameters | the same |
 
-**Results (2026-10-15):** all 24 reference goals match FreeCAD (15 probes and test parts, the 9 S 80 pump parts other than the casing, including the impeller's spline blades), at 1–250 ms per part. The 52-feature S 80 casing builds in about 1 s (slowest feature 65 ms); its FreeCAD reference takes longer than an MCP call allows, so it is compared with the tool below.
+**Results (2026-10-15):** 6,761 of 6,762 DeepCAD test goals and all 24 reference goals match FreeCAD (below). The reference goals are 15 probes and test parts and the 9 S 80 pump parts other than the casing (including the impeller's spline blades), built at 1–250 ms per part. The 52-feature S 80 casing builds in about 1 s (slowest feature 65 ms); its FreeCAD reference takes longer than an MCP call allows, so it is compared with the tool below.
 
 ### Comparing at scale
 
@@ -113,7 +113,7 @@ python tools/compare_freecad.py --goals ~/taiga-expanded-0013/deepcad_test/goals
     --freecad ~/taiga-expanded-0013/deepcad_test/teacher --log ~/taiga-expanded-0013/deepcad_test/teacher.log --workers 8
 ```
 
-First run (2026-10-15, carbonio, build123d 0.13 / OCP 8.0): 6,701 of 6,762 DeepCAD test goals (99.1 %) matched FreeCAD at IoU ≥ 0.999, at 10 ms per part median (180 ms for 11–20 features). The mismatches were nearly all the checker and the booleans, not the translation: equal parts share their faces exactly, and OpenCascade's intersection then often fails (IoU 0 with equal volumes and bounding boxes); build123d's face merging after a boolean broke solids fused across shared faces. With 2026.10.15.4, 46 of the 47 remaining mismatches match (checked with OCP 7.9); the last (`dc_0088_00881862`, an outline whose arc wraps around the base circle) differs from FreeCAD by exactly the base circle's volume. Rerun on the full set to confirm. The tool saves mismatches with their FreeCAD parts in `<out>_mismatches/`, so they can be rerun or reproduced elsewhere.
+First run (2026-10-15, carbonio, build123d 0.13 / OCP 8.0): 6,701 of 6,762 DeepCAD test goals (99.1 %) matched FreeCAD at IoU ≥ 0.999, at 10 ms per part median (180 ms for 11–20 features). The mismatches were nearly all the checker and the booleans, not the translation: equal parts share their faces exactly, and OpenCascade's intersection then often fails (IoU 0 with equal volumes and bounding boxes); build123d's face merging after a boolean broke solids fused across shared faces. With 2026.10.15.4 (carbonio, OCP 8.0): **6,761 of 6,762 match** (1–5, 6–10 and 11–20 features all 1.000), at 9 ms per part median, 60 ms at the 90th percentile and 186 ms median for 11–20 features. The one left (`dc_0088_00881862`, IoU 0.67, an outline whose arc wraps around the base circle) differs from FreeCAD by exactly the base circle's volume (98 mm³). The tool saves mismatches with their FreeCAD parts in `<out>_mismatches/`, so they can be rerun or reproduced elsewhere.
 
 For any other goal file (the S 80, synthetic suites), `tools/freecad_reference.sh GOALS.json OUT_DIR` builds the FreeCAD parts first, on a machine with a Taiga work folder.
 
