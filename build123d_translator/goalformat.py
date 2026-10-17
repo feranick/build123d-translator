@@ -1,5 +1,5 @@
 """goalformat.py — the goal format: kinds, conventions, an example, and static validation.
-Version: 2026.10.16.2
+Version: 2026.10.17.1
 
 A goal file is {name: goal}; a goal is {"features": [{"kind": ..., "params": {...}}, ...]},
 one solid part, features in build order, lengths in mm. The format is the one of the
@@ -13,6 +13,8 @@ PATTERN_KINDS = ("polar_pattern", "linear_pattern", "mirror")
 SKETCHED_PLACEABLE = ("boss_cyl", "boss_box", "hole", "hole_std", "pocket_rect", "profile_boss", "profile_pocket",
                       "hole_cb", "hole_cs", "text")
 EXTRUDED = ("boss_cyl", "boss_box", "pocket_rect", "profile_boss", "profile_pocket")  # take taper and until
+ANGLED_KINDS = ("boss_cyl", "boss_box", "hole", "pocket_rect", "profile_boss", "profile_pocket")  # Taiga patch 0020
+U_KEYS = ("ux", "uy", "uz")
 DRESSUPS = ("fillet_top", "fillet_vertical", "chamfer_top", "shell", "fillet_edges", "chamfer_edges", "draft", "offset",
             "profile_intersect", "split")
 
@@ -140,6 +142,13 @@ CONVENTIONS = [
     "font installed; give font_path for identical parts on every machine.",
     "profile_project: the outline lies on an origin plane beside the part (nx, ny, nz pointing away from it, at off) and "
     "is projected back along -(nx, ny, nz); h or depth goes along the surface normal.",
+    "Angled planes (sketches at any angle: inclined bores, angled pins and bosses, slanted windows; as Taiga's patch "
+    "0020): give the plane's in-plane x direction ux, uy, uz with any non-zero normal nx, ny, nz (not limited to +-1) and "
+    "the plane's origin x, y, z, which is the feature's centre. Frame: n = (nx, ny, nz) normalised, u = (ux, uy, uz) "
+    "made perpendicular to n, v = n x u. Circles and rectangles are centred on the origin (w along u, d along v); "
+    "outlines are in (u, v) relative to the origin. The extrusion is symmetric about the plane (h or depth is the "
+    "total); a hole, pocket_rect or profile_pocket without depth goes through all, both ways. Only boss_cyl, boss_box, "
+    "hole, pocket_rect, profile_boss and profile_pocket; no off, at, until, taper or tip.",
     "One goal is one solid part; several separate solids are several goals.",
 ]
 
@@ -160,9 +169,12 @@ def goal_format() -> dict:
         o = dict(opt)
         if k in SKETCHED_PLACEABLE:
             o.update({"nx": "face normal", "ny": "", "nz": "", "z": "centre z", "off": "origin-plane offset", "at": "point on the face"})
+        if k in ANGLED_KINDS:
+            o.update({"ux": "angled plane: in-plane x direction (with nx, ny, nz any non-zero normal; x, y, z the origin)",
+                      "uy": "", "uz": ""})
         kinds[k] = {"what": what, "required": list(req), "optional": list(o),
                     "descriptions": {p: d for p, d in {**req, **o}.items() if d}}
-    return {"format": "goal (build123d-translator)", "conventions": CONVENTIONS, "kinds": kinds,
+    return {"format": "goal (build123d-translator)", "angled_planes": True, "conventions": CONVENTIONS, "kinds": kinds,
             "example": EXAMPLE, "limits": "Up to a few hundred features per goal; lengths of 0.1 mm to a few metres."}
 
 
@@ -225,6 +237,38 @@ def _unit(params, keys) -> bool | None:
     return all(_num(x) for x in v) and sorted(abs(x) for x in v) == [0, 0, 1]
 
 
+def _angled_errors(k: str, p: dict) -> list[str]:
+    """Errors of a feature on an angled plane (ux, uy, uz given), with Taiga's (patch 0020) messages."""
+    errs = []
+    if not all(key in p for key in U_KEYS):
+        return ["an angled plane needs all of ux, uy, uz"]
+    if k not in ANGLED_KINDS:
+        errs.append(f"only {', '.join(ANGLED_KINDS)} can be on an angled plane")
+    nv = [p.get(key, 0) for key in ("nx", "ny", "nz")]
+    uv = [p.get(key, 0) for key in U_KEYS]
+    if not all(_num(x) for x in nv + uv):
+        errs.append("an angled plane needs numbers nx, ny, nz and ux, uy, uz")
+    else:
+        nn = sum(x * x for x in nv) ** 0.5
+        un = sum(x * x for x in uv) ** 0.5
+        if nn < 1e-12:
+            errs.append("angled plane: zero normal")
+        elif un < 1e-12 or abs(sum(a * b for a, b in zip(nv, uv))) / nn > 0.999 * un:
+            errs.append("angled plane: u is parallel to the normal")
+    for key in ("x", "y", "z"):
+        if key in p and not _num(p[key]):
+            errs.append(f"'{key}' must be a number")
+    if "off" in p:
+        errs.append("an angled plane takes its position from x, y, z, not 'off'")
+    for key, why in (("at", "an angled plane takes its position from x, y, z, not 'at'"),
+                     ("until", "until is not available on an angled plane (Taiga has no equivalent)"),
+                     ("taper", "taper is not available on an angled plane (Taiga has no equivalent)"),
+                     ("tip", "tip is not available on an angled plane (Taiga has no equivalent)")):
+        if key in p:
+            errs.append(why)
+    return errs
+
+
 def validate_goal(goal: dict) -> dict:
     errors, warnings = [], []
     feats = goal.get("features") if isinstance(goal, dict) else None
@@ -247,8 +291,11 @@ def validate_goal(goal: dict) -> dict:
             errors.append(f"{where}: the first feature must be a base ({', '.join(BASE_KINDS)})")
         if i > 0 and k in BASE_KINDS and k not in ("profile_revolve", "loft", "sweep", "thicken"):
             errors.append(f"{where}: a base kind can only be the first feature")
+        angled = any(key in p for key in U_KEYS)
         for r in KINDS[k][0]:
             if r in ("h", "depth") and k in EXTRUDED and "until" in p:
+                continue
+            if r == "depth" and angled:  # on an angled plane a pocket without depth goes through all
                 continue
             if r not in p:
                 errors.append(f"{where}: missing '{r}'")
@@ -337,7 +384,9 @@ def validate_goal(goal: dict) -> dict:
             bad = _path(p["path"])
             if bad:
                 errors.append(f"{where}: path: {bad}")
-        if _unit(p, ("nx", "ny", "nz")) is False:
+        if angled:
+            errors += [f"{where}: {e}" for e in _angled_errors(k, p)]
+        elif _unit(p, ("nx", "ny", "nz")) is False:
             errors.append(f"{where}: nx, ny, nz must be one of +-1 and the others 0")
         if _unit(p, ("ax", "ay", "az")) is False:
             errors.append(f"{where}: ax, ay, az must be one of +-1 and the others 0")
@@ -357,7 +406,9 @@ def validate_goal(goal: dict) -> dict:
             warnings.append(f"{where}: 'angle' is used only with an axis (ax, ay, az); without one the copies fill 360 degrees")
         if k in ("fillet_edges", "chamfer_edges") and not ({"pts", "nx", "ny", "nz", "ax", "ay", "az"} & set(p)):
             warnings.append(f"{where}: no edge selection given; the top face's edge loop is used")
-        if "off" in p and _unit(p, ("nx", "ny", "nz")) is None:
+        if angled:
+            pass
+        elif "off" in p and _unit(p, ("nx", "ny", "nz")) is None:
             errors.append(f"{where}: 'off' needs the plane normal nx, ny, nz")
         elif "off" in p and _num(p["off"]) and k in SKETCHED_PLACEABLE and _unit(p, ("nx", "ny", "nz")):
             axis = next(a for a in "xyz" if p.get("n" + a, 0) != 0)

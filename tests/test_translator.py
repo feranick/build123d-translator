@@ -1,6 +1,6 @@
 """Tests: every reference goal matches the FreeCAD reference builder (volume and bounding box),
 scripts rebuild the same part, validation catches bad goals, the API writes files.
-Version: 2026.10.16.2
+Version: 2026.10.17.1
 
 The references (tests/freecad_reference.json) were measured with the FreeCAD 1.1.3 reference
 builder of the goal format: probes for each convention (shell inward, hexagon corner on +X,
@@ -229,3 +229,77 @@ def test_new_features_validation():
     for text in ("'next' or 'last'", "'tip' needs 'depth'", "not an origin plane", "'cbr' must exceed",
                  "one of 'h'", "non-empty string", "not a draft"):
         assert text in errs, text
+
+
+# ---- 2026.10.17.1: angled planes (Taiga patch 0020): exact volumes, validation, scripts
+
+COS30, SIN30 = math.cos(math.radians(30)), math.sin(math.radians(30))
+BLOCK = {"kind": "base_box", "params": {"w": 60, "d": 40, "h": 30}}
+V0 = 60 * 40 * 30
+TILT = {"x": 0, "y": 0, "z": 15, "nx": 0, "ny": -SIN30, "nz": COS30, "ux": 1, "uy": 0, "uz": 0}  # 30 deg from Z about X
+
+
+def _vol(*feats):
+    solid, _ = T.build({"features": [BLOCK, *feats]})
+    assert solid.is_valid
+    return solid.volume
+
+
+def test_angled_through_hole_and_pin():
+    r = 3.0
+    # leaves through top and bottom: horizontal sections are ellipses of area pi r^2 / cos
+    assert abs(_vol(_f("hole", r=r, **TILT)) - (V0 - PI * r * r * 30 / COS30)) < 1e-6 * V0
+    # a pin longer than the part, sticking out on both sides
+    assert abs(_vol(_f("boss_cyl", r=r, h=200, **TILT)) - (V0 + PI * r * r * (200 - 30 / COS30))) < 1e-6 * V0
+    # u not perpendicular to n is projected: the same bore
+    skew = dict(TILT, ux=1.0, uy=0.3, uz=0.2)
+    assert abs(_vol(_f("hole", r=r, **skew)) - _vol(_f("hole", r=r, **TILT))) < 1e-6
+
+
+def test_angled_pockets_and_bosses():
+    n = {"nx": 1, "ny": -2, "nz": 4}  # any non-zero normal, not unit
+    u = {"ux": 2, "uy": 1, "uz": 0}   # perpendicular to n
+    c = {"x": 5, "y": -3, "z": 15}
+    assert abs(_vol(_f("pocket_rect", w=10, d=6, depth=8, **n, **u, **c)) - (V0 - 480)) < 1e-6 * V0
+    tri = {"start": [0, 0], "segs": [["L", 8, 0], ["L", 0, 6], ["L", 0, 0]]}  # in (u, v) about the origin
+    assert abs(_vol(_f("profile_pocket", outline=tri, depth=5, **n, **u, **c)) - (V0 - 120)) < 1e-6 * V0
+    # pocket_rect without depth: through all, both ways (6 x 4 window tilted 30 deg)
+    assert abs(_vol(_f("pocket_rect", w=6, d=4, **TILT)) - (V0 - 6 * 4 * 30 / COS30)) < 1e-6 * V0
+    # boss_box and profile_boss sticking out both ways
+    sq = {"start": [-2, -2], "segs": [["L", 2, -2], ["L", 2, 2], ["L", -2, 2], ["L", -2, -2]]}
+    assert abs(_vol(_f("boss_box", w=4, d=4, h=200, **TILT)) - (V0 + 16 * (200 - 30 / COS30))) < 1e-6 * V0
+    assert abs(_vol(_f("profile_boss", outline=sq, h=200, **TILT)) - (V0 + 16 * (200 - 30 / COS30))) < 1e-6 * V0
+
+
+def test_angled_validation():
+    def errs(kind, **p):
+        return " ".join(validate_goal({"features": [BLOCK, _f(kind, **p)]})["errors"])
+
+    assert validate_goal({"features": [BLOCK, _f("hole", r=3, **TILT)]})["ok"]
+    assert validate_goal({"features": [BLOCK, _f("pocket_rect", w=6, d=4, **TILT)]})["ok"]  # depth optional
+    assert "angled plane: zero normal" in errs("hole", r=3, **dict(TILT, nx=0, ny=0, nz=0))
+    assert "angled plane: u is parallel to the normal" in errs("hole", r=3, **dict(TILT, ux=0, uy=-SIN30, uz=COS30))
+    assert "not 'off'" in errs("hole", r=3, off=15, **TILT)
+    assert "can be on an angled plane" in errs("fillet_edges", r=1, **{k: TILT[k] for k in ("ux", "uy", "uz")})
+    for key, val in (("until", "next"), ("taper", 5), ("at", [0, 0, 30])):
+        assert "angled plane" in errs("boss_cyl", r=3, h=10, **{key: val}, **TILT), key
+    assert "tip" in errs("hole", r=3, depth=10, tip=118, **TILT)
+    assert "all of ux, uy, uz" in errs("hole", r=3, ux=1, **{k: TILT[k] for k in ("x", "y", "z", "nx", "ny", "nz")})
+    fmt = T.__dict__.get("goal_format") or __import__("build123d_translator.goalformat", fromlist=["x"]).goal_format()
+    assert fmt["angled_planes"] and "ux" in fmt["kinds"]["hole"]["optional"]
+    with pytest.raises(Exception) as e:
+        T.build({"features": [BLOCK, _f("hole", r=3, **dict(TILT, ux=0, uy=-SIN30, uz=COS30))]})
+    assert "u is parallel to the normal" in str(e.value)
+
+
+def test_angled_script_round_trip():
+    n = {"nx": 1, "ny": -2, "nz": 4}
+    u = {"ux": 2, "uy": 1, "uz": 0}
+    goal = {"features": [BLOCK, _f("hole", r=3, **TILT), _f("polar_pattern", n=3),
+                         _f("pocket_rect", w=10, d=6, depth=8, x=5, y=-3, z=15, **n, **u),
+                         _f("boss_cyl", r=2, h=120, x=-20, y=0, z=15, nx=1, ny=0, nz=1, ux=0, uy=1, uz=0)]}
+    assert validate_goal(goal)["ok"]
+    solid, _ = T.build(goal)
+    ns = {"__name__": "not_main"}
+    exec(compile(T.script("angled", goal), "angled.py", "exec"), ns)  # noqa: S102
+    assert solid.is_valid and T.iou(ns["part"], solid) > 0.999999

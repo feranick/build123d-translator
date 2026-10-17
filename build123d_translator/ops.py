@@ -1,5 +1,5 @@
 """ops.py — goal features as build123d operations.
-Version: 2026.10.16.2
+Version: 2026.10.17.1
 
 `Builder` turns the features of a goal, in order, into one solid. Each feature kind is a
 method with the goal's parameters as keyword arguments, so a goal reads as a script:
@@ -165,22 +165,25 @@ def outline_face(outline: dict, k: int, c: float) -> Face:
     return Face(outline_wire(outline, k, c))
 
 
-def outline_wire(outline: dict, k: int, c: float) -> Wire:
-    """Wire of an outline or open curve {'start', 'segs'} on the plane {axis k = c}."""
-    cur = point(k, c, *outline["start"])
+def outline_wire(outline: dict, k: int, c: float, pt=None) -> Wire:
+    """Wire of an outline or open curve {'start', 'segs'} on the plane {axis k = c}; or, with
+    pt(a, b) -> Vector, on any plane (angled planes: o + a u + b v)."""
+    if pt is None:
+        pt = lambda a, b: point(k, c, a, b)  # noqa: E731
+    cur = pt(*outline["start"])
     edges = []
     for seg in outline["segs"]:
         if seg[0] == "L":
-            end = point(k, c, seg[1], seg[2])
+            end = pt(seg[1], seg[2])
             edges.append(Edge.make_line(cur, end))
         elif seg[0] == "A":
-            mid, end = point(k, c, seg[1], seg[2]), point(k, c, seg[3], seg[4])
+            mid, end = pt(seg[1], seg[2]), pt(seg[3], seg[4])
             if (mid - cur).cross(end - cur).length < 1e-9:
                 edges.append(Edge.make_line(cur, end))
             else:
                 edges.append(Edge.make_three_point_arc(cur, mid, end))
         elif seg[0] == "S":
-            pts = [cur] + [point(k, c, *q) for q in seg[1]]
+            pts = [cur] + [pt(*q) for q in seg[1]]
             end = pts[-1]
             edges.append(Edge.make_spline(pts, parameters=_chord_params(pts)))
         else:
@@ -235,6 +238,44 @@ def path_wire(path: dict) -> Wire:
             raise BuildError(f"unknown path segment {seg[0]!r}")
         cur = end
     return Wire(edges)
+
+
+# ---- angled planes (Taiga patch 0020): sketches on planes at any angle
+
+U_KEYS = ("ux", "uy", "uz")
+ANGLED_KINDS = ("boss_cyl", "boss_box", "hole", "pocket_rect", "profile_boss", "profile_pocket")
+
+
+def is_angled(p: dict) -> bool:
+    """A sketched feature is on an angled plane when its params give the in-plane x direction."""
+    return all(k in p for k in U_KEYS)
+
+
+def angled_frame(p: dict) -> tuple[Vector, Vector, Vector, Vector]:
+    """(origin, u, v, n) of an angled plane, orthonormal: n = (nx, ny, nz) normalised, u = (ux, uy, uz)
+    made perpendicular to n, v = n x u; the origin (x, y, z) is the feature's centre."""
+    n = Vector(*(float(p.get(k, 0.0)) for k in NORMAL_KEYS))
+    if n.length < 1e-12:
+        raise BuildError("angled plane: zero normal")
+    n = n.normalized()
+    u = Vector(*(float(p[k]) for k in U_KEYS))
+    u = u - n * u.dot(n)
+    if u.length < 1e-12:
+        raise BuildError("angled plane: u is parallel to the normal")
+    u = u.normalized()
+    return Vector(float(p.get("x", 0.0)), float(p.get("y", 0.0)), float(p.get("z", 0.0))), u, n.cross(u), n
+
+
+def angled_face(shape: tuple, o: Vector, u: Vector, v: Vector, n: Vector) -> Face:
+    """Profile in the plane's frame: ("circle", r) and ("rect", w, d) centred on the origin (w along u,
+    d along v); ("outline", outline) in (u, v) relative to the origin."""
+    if shape[0] == "circle":
+        return Face(Wire([Edge.make_circle(shape[1], Plane(origin=o, x_dir=u, z_dir=n))]))
+    if shape[0] == "rect":
+        w, d = shape[1] / 2, shape[2] / 2
+        return Face(Wire.make_polygon([o + u * (su * w) + v * (sv * d) for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1))],
+                                      close=True))
+    return Face(outline_wire(shape[1], 0, 0.0, pt=lambda a, b: o + u * a + v * b))
 
 
 def circle_face(k: int, c: float, u: float, v: float, r: float) -> Face:
@@ -423,6 +464,20 @@ class Builder:
             tool = prism(face, k, 0.0, L, -sign)
         self._combine(tool, op)
 
+    def _angled(self, p: dict, shape: tuple, op: str, length=None):
+        """A feature on an angled plane: the profile in the plane's frame, extruded symmetrically
+        about the plane (h or depth is the total; holes and pockets without depth: through all, both ways)."""
+        for key, why in (("off", "an angled plane takes its position from x, y, z, not 'off'"),
+                         ("until", "until is not available on an angled plane"),
+                         ("taper", "taper is not available on an angled plane"),
+                         ("at", "an angled plane takes its position from x, y, z, not 'at'")):
+            if key in p:
+                raise BuildError(why)
+        o, u, v, n = angled_frame(p)
+        face = angled_face(shape, o, u, v, n)
+        L = self._through() if length is None else float(length)
+        self._combine(Solid.extrude(face.moved(Location(n * (-L / 2))), n * L), op)
+
     # -- bases --
     def base_box(self, w, d, h):
         s = Solid.make_box(w, d, h).moved(Location((-w / 2, -d / 2, 0)))
@@ -447,14 +502,22 @@ class Builder:
     # -- sketched features --
     def boss_cyl(self, r, x=0.0, y=0.0, h=1.0, **p):
         p.update(x=x, y=y)
+        if is_angled(p):
+            return self._angled(p, ("circle", r), "add", h)
         self._sketched(p, lambda k, c: circle_face(k, c, *self._uv(p, k), r), "add", h)
 
     def boss_box(self, w, d, x=0.0, y=0.0, h=1.0, **p):
         p.update(x=x, y=y)
+        if is_angled(p):
+            return self._angled(p, ("rect", w, d), "add", h)
         self._sketched(p, lambda k, c: rect_face(k, c, *self._uv(p, k), w, d), "add", h)
 
     def hole(self, r, x=0.0, y=0.0, depth=None, tip=None, **p):
         p.update(x=x, y=y)
+        if is_angled(p):
+            if tip is not None:
+                raise BuildError("tip is not available on an angled plane")
+            return self._angled(p, ("circle", r), "sub", depth)
         if tip is not None:
             self._drilled(p, r, [], depth, tip)
         else:
@@ -496,16 +559,24 @@ class Builder:
         p.update(x=x, y=y)
         self._drilled(p, r, [(csr, 0.0), (r, (csr - r) / math.tan(math.radians(float(angle)) / 2))], depth, tip)
 
-    def pocket_rect(self, w, d, x=0.0, y=0.0, depth=1.0, **p):
+    def pocket_rect(self, w, d, x=0.0, y=0.0, depth=None, **p):
         p.update(x=x, y=y)
-        self._sketched(p, lambda k, c: rect_face(k, c, *self._uv(p, k), w, d), "sub", depth)
+        if is_angled(p):  # without depth: through all, both ways
+            return self._angled(p, ("rect", w, d), "sub", depth)
+        self._sketched(p, lambda k, c: rect_face(k, c, *self._uv(p, k), w, d), "sub", 1.0 if depth is None else depth)
 
     def profile_boss(self, outline, h=None, **p):
+        if is_angled(p):
+            if h is None:
+                raise BuildError("profile_boss needs h")
+            return self._angled(p, ("outline", outline), "add", h)
         if h is None and p.get("until") is None:
             raise BuildError("profile_boss needs h or until")
         self._sketched(p, lambda k, c: outline_face(outline, k, c), "add", h)
 
     def profile_pocket(self, outline, depth=None, **p):
+        if is_angled(p):
+            return self._angled(p, ("outline", outline), "sub", depth)
         self._sketched(p, lambda k, c: outline_face(outline, k, c), "sub", depth)
 
     # -- revolve and groove --
@@ -839,6 +910,8 @@ class Builder:
         fn = getattr(self, kind, None)
         if fn is None or kind not in KINDS:
             raise BuildError(f"unknown kind {kind!r}")
+        if is_angled(params) and kind not in ANGLED_KINDS:
+            raise BuildError(f"only {', '.join(ANGLED_KINDS)} can be on an angled plane")
         fn(**params)
 
 

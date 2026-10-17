@@ -11,7 +11,7 @@ Why a translator: once a goal exists, there is nothing left to decide. Choosing 
 ```bash
 python -m venv .venv && source .venv/bin/activate      # Python 3.10+
 pip install -e ".[mcp,test]"                           # build123d, the MCP SDK, pytest
-pytest -q                                              # 57 tests, about 25 s
+pytest -q                                              # 61 tests, about 25 s
 ```
 
 build123d has wheels for Linux, macOS and Windows; no CAD application is needed.
@@ -82,6 +82,7 @@ A typical agent loop: read `goal_format`; turn the request into one goal per sol
 - **Units and axes:** mm, global coordinates, Z up; the base sits on z = 0, centred on the origin in X and Y.
 - **First feature is the base:** `base_box`, `base_cyl`, `base_hex`, `base_ring`, `profile_base` (any closed outline of lines, arcs and splines) or `profile_revolve` (a turned part).
 - **Sketched features** (`boss_cyl`, `boss_box`, `hole`, `hole_std`, `pocket_rect`, `profile_boss`, `profile_pocket`) go on the top face at `x`, `y`; on another face with its normal (`nx`, `ny`, `nz`) and centre `z`; on one of several faces with `at`; on an origin plane with `off`, extruded both ways (cross bores, windows, cavities).
+- **Angled planes** (2026.10.17.1, Taiga's patch 0020): `boss_cyl`, `boss_box`, `hole`, `pocket_rect`, `profile_boss` and `profile_pocket` can lie on a plane at any angle: give its in-plane x direction `ux`, `uy`, `uz`, any non-zero normal `nx`, `ny`, `nz`, and its origin `x`, `y`, `z` (the feature's centre). Frame: n normalised, u made perpendicular to n, v = n × u; circles and rectangles centred on the origin (w along u, d along v), outlines in (u, v) about it; extruded symmetrically (h or depth is the total; holes and pockets without depth go through all, both ways). Inclined bores, angled pins, slanted windows. No `off`, `at`, `until`, `taper` or `tip` there (Taiga has no equivalent). Checked against exact volumes: a bore tilted θ through a block removes π r² h / cos θ.
 - **Revolve and groove** about an origin axis; **patterns and mirror** repeat the previous feature about or along an origin axis.
 - **Curved bodies** (2026.10.16.1): `loft` / `loft_cut` through cross-sections on parallel planes (smooth or ruled), `sweep` / `sweep_cut` of a profile along a 3D path of lines, arcs and splines; as base or later features, and repeatable with patterns and mirror. `examples/car_body.json` is a generic car body: a loft through 11 sections along X (a flat floor line and one spline over sides and roof each), with the four wheel arches cut (mirror across XZ), 1.4 s. These kinds are not in the Taiga goal format (FreeCAD's AdditiveLoft and AdditivePipe would be its counterparts), so they are checked against exact volumes instead (a ruled loft of two squares is a frustum; a circle swept a quarter turn is a quarter torus).
 - **Machining and moulding details** (2026.10.16.2): `taper` (draft angle) on bosses and pockets; `until: "next" | "last"` instead of a height or depth (a boss up to the next or last material, a pocket through the first wall or all of it); blind holes (`depth`, optional drill point `tip`), `hole_cb` (counterbore) and `hole_cs` (countersink); `draft` of side faces about a neutral plane; `thread` (a 60° V groove cut along a helix into a shaft or bore, right- or left-handed); helix segments `['H', ...]` in sweep paths (springs, coils).
@@ -140,8 +141,9 @@ For any other goal file (the S 80, synthetic suites), `tools/freecad_reference.s
 
 | Component | Version |
 |---|---|
-| Package | 2026.10.16.2 |
-| `ops.py`, `goalformat.py`, `mcp_server.py` | 2026.10.16.2 (`taper` and `until` on bosses and pockets; blind holes with `tip`, `hole_cb`, `hole_cs`; `draft`, `offset`, `profile_intersect`, `split`, `thicken`, `thread`, `text`, `profile_project`; helix path segments; loft, sweep and thicken accepted as later features in validation) |
+| Package | 2026.10.17.1 |
+| `ops.py`, `goalformat.py` | 2026.10.17.1 (angled planes, as Taiga's patch 0020: `ux`, `uy`, `uz` on the six sketched kinds, the plane's frame and symmetric extrusion; validation with Taiga's messages, plus errors for `at`, `until`, `taper`, `tip`; `pocket_rect` without depth goes through all on an angled plane) |
+| `ops.py`, `goalformat.py`, `mcp_server.py` (before) | 2026.10.16.2 (`taper` and `until` on bosses and pockets; blind holes with `tip`, `hole_cb`, `hole_cs`; `draft`, `offset`, `profile_intersect`, `split`, `thicken`, `thread`, `text`, `profile_project`; helix path segments; loft, sweep and thicken accepted as later features in validation) |
 | `ops.py`, `goalformat.py`, `mcp_server.py` (before) | 2026.10.16.1 (`loft`, `loft_cut`, `sweep`, `sweep_cut`) |
 | `ops.py` (before) | 2026.10.15.4 (booleans through OpenCascade directly, faces merged on a copy and kept only if the result stays valid: build123d's `clean()` broke solids fused across shared faces and changed them in place; an invalid result is healed with `fix()`; seam edges found with basic OCP calls, since newer OCP builds no longer expose `TopTools_IndexedDataMapOfShapeListOfShape`) |
 | `translate.py` | 2026.10.15.3 (IoU robust to coincident faces: when the plain intersection fails or comes back partial, one part is moved by a tiny step along skew directions and the intersection extrapolated to zero step) |
