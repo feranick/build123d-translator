@@ -1,5 +1,5 @@
 """api.py — what other programs and the MCP server call. JSON in, JSON out.
-Version: 2026.10.15.2
+Version: 2026.10.20.1
 
     goal_format()                         the goal format, for the caller to read
     validate(goals)                       static checks, no geometry
@@ -26,6 +26,7 @@ from pathlib import Path
 
 from . import __version__
 from .goalformat import goal_format as _goal_format
+from .goalformat import resolve
 from .goalformat import validate as _validate
 from .goalformat import validate_goal
 
@@ -132,10 +133,13 @@ def _request_dir(prefix: str) -> Path:
 
 
 def _split(goals: dict) -> tuple[dict, dict]:
+    """(valid goals, with the goals they combine by name inlined; {name: why} of the invalid ones)."""
     ok, bad = {}, {}
+    checked = _validate(goals)
+    full = resolve(goals)
     for n, g in goals.items():
-        v = validate_goal(g)
-        (ok if v["ok"] else bad)[n] = g if v["ok"] else {"built": False, "why": "invalid goal", "errors": v["errors"]}
+        v = checked[n]
+        (ok if v["ok"] else bad)[n] = full[n] if v["ok"] else {"built": False, "why": "invalid goal", "errors": v["errors"]}
     return ok, bad
 
 

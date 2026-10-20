@@ -89,6 +89,15 @@ A typical agent loop: read `goal_format`; turn the request into one goal per sol
 - **Whole-part operations** (2026.10.16.2): `profile_intersect` (keep the part inside an outline extruded through it), `split` (keep one side of a plane), `offset` (grow or shrink every face).
 - **Surfaces and markings** (2026.10.16.2): `thicken` (a sheet of thickness t through open curves: panels, blades), `text` (embossed or engraved on a face; give `font_path` for the same glyphs on every machine), `profile_project` (an outline projected onto curved faces, then embossed or engraved). Like lofts and sweeps, these are not in the Taiga format and are checked against exact volumes (frustums for taper and draft, Pappus for threads, cylinder shells for projections); all match to 1e-6 or better except the helix tube, whose 0.3 % is the profile's tilt to the path.
 - **Fillets and chamfers:** the top face's edge loop, all vertical edges, a face's edge loop, edges along an axis, or chosen edges by a point on each (`pts`); **shell** inward, open at the top face or at faces named by points.
+- **More vocabulary** (2026.10.20.1; not in the Taiga format, checked against exact volumes):
+  - *Patterns:* `linear_pattern` grids (`n2`, `length2`, second direction `bx`, `by`, `bz`); `features: k` repeats the last k features together (a boss with its hole), and a pattern counts as one feature, so a pattern of a pattern now repeats all its copies; `all: true` repeats or mirrors the whole part; `skip` leaves copies out (`[2, 4]`, on a grid `[[i, j], ...]`). Copies apart from each other are combined in one boolean.
+  - *Outlines:* shorthands anywhere an outline goes: `{"circle": [cu, cv, r]}`, `{"ellipse": [cu, cv, a, b]}`, `{"rect": [cu, cv, w, d], "corner_r": r}`, `{"polygon": [cu, cv, r, n]}`, `{"slot": [cu, cv, length, w]}`, `{"arc_slot": [cu, cv, r, w, a1, a2]}`, with `rotation`; elliptical arc segments `['E', cu, cv, a, b, rotation, u, v]`; `holes: [outline, ...]` in `profile_base`, `profile_boss`, `profile_pocket`, `profile_intersect`, `sweep`, `sweep_cut` (a flange with its bolt holes in one feature, a tube swept from a ring).
+  - *Bases:* `base_sphere`, `base_cone` (cone or frustum), `base_torus`, `base_wedge` (ramp, optional flat top), `base_polygon` (n sides).
+  - *Slots:* `slot` (straight, overall length, any angle) and `slot_arc` (along an arc), pockets with rounded ends; on faces, origin planes and angled planes.
+  - *Screw holes:* `hole_std` takes an ISO metric size (`"M1.6"` to `"M24"`, `build123d_translator/standards.py`): a clearance hole (`fit` close / normal / loose, ISO 273), with `head: "socket"` (counterbore for ISO 4762, DIN 974-1) or `"countersunk"` (90°, ISO 10642 head diameter), or `tapped: true` (tap drill D − P) and `thread: true` (the internal thread, depth (D − tap)/2, over the hole's depth). `goal_format` lists the table under `screws`.
+  - *Details:* `corner_r` on `boss_box` and `pocket_rect`; asymmetric chamfers (`size2`, or `angle`: size2 = size·tan(angle); size on the reference face: the top face, the face selected by normal, or the face nearest `ref`); `shell` with `faces_t: [{pt, t}]` (walls of their own thickness).
+  - *Other parts:* `combine` adds, removes or intersects another goal (by name in the same call, or inline) or a STEP file, rotated and moved; as the first feature it is the base (start from an imported part). Validation checks names and cycles; the scripts carry the other goal inline.
+  - A threaded tapped hole's bore is built from true cylinder and cone surfaces: OpenCascade's boolean of the helical groove with a coaxial revolved surface fails silently (it returned the bore without the groove).
 - **One goal per solid part.**
 
 ## Conventions checked against FreeCAD
@@ -128,6 +137,7 @@ For any other goal file (the S 80, synthetic suites), `tools/freecad_reference.s
 |---|---|
 | `build123d_translator/ops.py` | The builder: each feature kind as a build123d operation (also copied into the scripts) |
 | `build123d_translator/goalformat.py` | The goal format and static validation |
+| `build123d_translator/standards.py` | ISO metric screw holes for `hole_std` (pitch, tap drill, clearances, counterbores, countersinks) |
 | `build123d_translator/translate.py` | Build, script, export, load, IoU |
 | `build123d_translator/api.py` | JSON functions with worker processes and time limits |
 | `build123d_translator/cli.py` | `b3dt` command line |
@@ -141,12 +151,13 @@ For any other goal file (the S 80, synthetic suites), `tools/freecad_reference.s
 
 | Component | Version |
 |---|---|
-| Package | 2026.10.17.1 |
-| `ops.py`, `goalformat.py` | 2026.10.17.1 (angled planes, as Taiga's patch 0020: `ux`, `uy`, `uz` on the six sketched kinds, the plane's frame and symmetric extrusion; validation with Taiga's messages, plus errors for `at`, `until`, `taper`, `tip`; `pocket_rect` without depth goes through all on an angled plane) |
+| Package | 2026.10.20.1 |
+| `ops.py`, `goalformat.py`, `standards.py`, `translate.py`, `api.py`, `mcp_server.py` | 2026.10.20.1 (grids, patterns of several features, of patterns and of the whole part, skipped copies; outline shorthands, ellipse arcs, holes in outlines; `base_sphere`, `base_cone`, `base_torus`, `base_wedge`, `base_polygon`; `slot`, `slot_arc`; `hole_std` with ISO metric sizes, fits, heads, tapped and threaded holes; `corner_r`; asymmetric chamfers; per-face shell thickness; `combine` with other goals and STEP files; scripts inline the screw table) |
+| `ops.py`, `goalformat.py` (before) | 2026.10.17.1 (angled planes, as Taiga's patch 0020: `ux`, `uy`, `uz` on the six sketched kinds, the plane's frame and symmetric extrusion; validation with Taiga's messages, plus errors for `at`, `until`, `taper`, `tip`; `pocket_rect` without depth goes through all on an angled plane) |
 | `ops.py`, `goalformat.py`, `mcp_server.py` (before) | 2026.10.16.2 (`taper` and `until` on bosses and pockets; blind holes with `tip`, `hole_cb`, `hole_cs`; `draft`, `offset`, `profile_intersect`, `split`, `thicken`, `thread`, `text`, `profile_project`; helix path segments; loft, sweep and thicken accepted as later features in validation) |
 | `ops.py`, `goalformat.py`, `mcp_server.py` (before) | 2026.10.16.1 (`loft`, `loft_cut`, `sweep`, `sweep_cut`) |
 | `ops.py` (before) | 2026.10.15.4 (booleans through OpenCascade directly, faces merged on a copy and kept only if the result stays valid: build123d's `clean()` broke solids fused across shared faces and changed them in place; an invalid result is healed with `fix()`; seam edges found with basic OCP calls, since newer OCP builds no longer expose `TopTools_IndexedDataMapOfShapeListOfShape`) |
-| `translate.py` | 2026.10.15.3 (IoU robust to coincident faces: when the plain intersection fails or comes back partial, one part is moved by a tiny step along skew directions and the intersection extrapolated to zero step) |
-| `api.py`, `tools/compare_freecad.py` | 2026.10.15.2 (the other part's bbox in comparisons; mismatches saved with their FreeCAD parts) |
+| `translate.py` (before) | 2026.10.15.3 (IoU robust to coincident faces: when the plain intersection fails or comes back partial, one part is moved by a tiny step along skew directions and the intersection extrapolated to zero step) |
+| `api.py` (before), `tools/compare_freecad.py` | 2026.10.15.2 (the other part's bbox in comparisons; mismatches saved with their FreeCAD parts) |
 | Other modules | 2026.10.15.1 |
 | Tested with | build123d 0.12.0, Python 3.10 (Linux) |

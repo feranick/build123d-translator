@@ -1,5 +1,5 @@
 """translate.py — goals to solids, scripts and files; the checker.
-Version: 2026.10.15.3
+Version: 2026.10.20.1
 
     build(goal)                    -> (solid, seconds per feature)
     script(name, goal)             -> a standalone build123d script that rebuilds the part
@@ -35,9 +35,15 @@ def _lit(v):
 
 
 def _ops_source() -> str:
-    src = inspect.getsource(ops)
-    src = re.sub(r'^""".*?"""\n', "", src, count=1, flags=re.S)  # module docstring
-    return src.strip() + "\n"
+    """The builder's code for a standalone script: the screw table (standards.py), then ops.py."""
+    from . import standards
+
+    parts = []
+    for mod in (standards, ops):
+        src = inspect.getsource(mod)
+        src = re.sub(r'^""".*?"""\n', "", src, count=1, flags=re.S)  # module docstring
+        parts.append(src.replace("from __future__ import annotations\n", "").strip())
+    return "from __future__ import annotations\n\n" + "\n\n\n".join(parts) + "\n"
 
 
 def script(name: str, goal: dict, standalone: bool = True) -> str:
