@@ -1,10 +1,10 @@
 """mcp_server.py — MCP server: lets LLM-based tools build CAD parts from goals with build123d.
-Version: 2026.10.20.1
+Version: 2026.10.21.1
 
 Tools (all JSON):
   goal_format      the goal format: kinds, parameters, conventions, an example. Read it first.
   validate_goals   static checks of {name: goal} (fast; fix errors before building)
-  check_goals      builds each goal: buildable or not and why, volume, bounding box
+  check_goals      builds each goal: buildable or not and why, volume, bounding box, mass properties
   build_parts      builds {name: goal}: per part the .step file, the build123d script (.py), volume, bbox
   get_script       the build123d script of one goal, as text (to read, edit or run elsewhere)
   verify_part      IoU of a part built elsewhere (a .step path) against a goal
@@ -36,8 +36,9 @@ combinations with other goals or STEP files). The
 translation is exact and fast (milliseconds to about a second per part).
 Workflow: call goal_format once and follow its conventions; write one goal per solid part;
 validate_goals and fix every error; build_parts. Results give the .step file and a standalone
-build123d script (.py) per part; get_file returns them if you are on another machine.
-Units are mm, Z up."""
+build123d script (.py) per part; get_file returns them if you are on another machine. Results also
+give volume, center_of_mass and inertia_mm5 (about the centre of mass, unit density: x density [kg/m3]
+x 1e-15 = kg m2), for masses and inertias in other translators. Units are mm, Z up."""
 
 server = _Server("build123d-translator", instructions=INSTRUCTIONS)
 
@@ -58,7 +59,8 @@ def validate_goals(goals: dict) -> dict:
 
 @server.tool()
 def check_goals(goals: dict) -> dict:
-    """Builds each goal without writing files: buildable (bool), the error if not, volume, bbox."""
+    """Builds each goal without writing files: buildable (bool), the error if not, volume, bbox, center_of_mass
+    (mm) and inertia_mm5 (3x3 about the centre of mass for unit density: x density [kg/m3] x 1e-15 = kg m2)."""
     return api.check(goals)
 
 

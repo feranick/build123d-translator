@@ -56,6 +56,25 @@ def test_build_errors_are_reported():
     assert "feature 2" in str(e.value)
 
 
+def test_mass_properties_exact():
+    """center_of_mass and inertia_mm5 (2026.10.21.1): about the centre of mass, unit density; off-diagonal
+    entries are the tensor's (-integral of x y), checked on a box turned 30 degrees about Z."""
+    from build123d import Box, Pos, Rot
+    a, b, c = 100.0, 10.0, 20.0
+    V = a * b * c
+    ixx, iyy, izz = V * (b * b + c * c) / 12, V * (a * a + c * c) / 12, V * (a * a + b * b) / 12
+    p = T.mass_properties(Pos(50, 20, 5) * Rot(0, 0, 30) * Box(a, b, c))
+    assert p["center_of_mass"] == pytest.approx([50, 20, 5], abs=1e-6)
+    cs, sn = math.cos(math.radians(30)), math.sin(math.radians(30))
+    want = [[cs * cs * ixx + sn * sn * iyy, cs * sn * (ixx - iyy), 0], [cs * sn * (ixx - iyy), sn * sn * ixx + cs * cs * iyy, 0],
+            [0, 0, izz]]
+    for got_row, want_row in zip(p["inertia_mm5"], want):
+        assert got_row == pytest.approx(want_row, rel=1e-8, abs=1e-6 * izz)
+    r = api.check({"disc": {"features": [{"kind": "base_cyl", "params": {"r": 20, "h": 50}}]}})["disc"]
+    assert r["center_of_mass"] == pytest.approx([0, 0, 25], abs=1e-6)
+    assert r["inertia_mm5"][2][2] == pytest.approx(math.pi * 20 ** 4 * 50 / 2, rel=1e-8)
+
+
 def test_api_build_writes_files(tmp_path, monkeypatch):
     monkeypatch.setenv("B3DT_OUT", str(tmp_path))
     goals = {"flange": {"features": REF["motor_flange"]["features"]},

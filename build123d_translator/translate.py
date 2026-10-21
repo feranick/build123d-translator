@@ -1,11 +1,12 @@
 """translate.py — goals to solids, scripts and files; the checker.
-Version: 2026.10.20.1
+Version: 2026.10.21.1
 
     build(goal)                    -> (solid, seconds per feature)
     script(name, goal)             -> a standalone build123d script that rebuilds the part
     export(solid, path_without_ext, formats)
     iou(a, b)                      -> volumetric IoU of two solids
     load(path)                     -> a solid from STEP / BREP
+    describe(solid)                -> volume, area, bbox, center_of_mass, inertia_mm5 (unit density), counts
 """
 from __future__ import annotations
 
@@ -142,9 +143,25 @@ def iou(a, b) -> float:
     return 0.0 if (v < 0 or v > 1.001 or math.isnan(v)) else min(v, 1.0)
 
 
+def _sig(x: float, n: int = 10) -> float:
+    return float(f"{x:.{n}g}")
+
+
+def mass_properties(solid) -> dict:
+    """Centre of mass [mm] and the inertia tensor about it for unit density [mm^5] (OpenCascade's
+    MatrixOfInertia: diagonal = integral of (y^2 + z^2), ...; off-diagonal = -integral of x y, ...).
+    For a material of density rho [kg/m3]: mass = rho * volume * 1e-9 kg, inertia = rho * I * 1e-15 kg m2."""
+    from build123d import CenterOf
+
+    c = solid.center(CenterOf.MASS)
+    scale = max(abs(x) for row in solid.matrix_of_inertia for x in row) or 1.0
+    m = [[_sig(x) if abs(x) > 1e-12 * scale else 0.0 for x in row] for row in solid.matrix_of_inertia]
+    return {"center_of_mass": [round(c.X, 6), round(c.Y, 6), round(c.Z, 6)], "inertia_mm5": m}
+
+
 def describe(solid) -> dict:
     bb = solid.bounding_box()
     return {"valid": bool(solid.is_valid), "volume": round(solid.volume, 3), "area": round(solid.area, 3),
             "bbox": [round(bb.size.X, 3), round(bb.size.Y, 3), round(bb.size.Z, 3)],
             "bbox_min": [round(bb.min.X, 3), round(bb.min.Y, 3), round(bb.min.Z, 3)],
-            "faces": len(solid.faces()), "edges": len(solid.edges())}
+            **mass_properties(solid), "faces": len(solid.faces()), "edges": len(solid.edges())}

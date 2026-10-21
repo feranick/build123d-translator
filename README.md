@@ -21,7 +21,7 @@ build123d has wheels for Linux, macOS and Windows; no CAD application is needed.
 ```bash
 b3dt format > goal_format.json                 # kinds, parameters, conventions, an example
 b3dt validate examples/parts.json              # static checks
-b3dt check examples/parts.json                 # build each goal: volume, bbox, or the error
+b3dt check examples/parts.json                 # build each goal: volume, bbox, mass properties, or the error
 b3dt build examples/parts.json [--stl]         # <name>.step + <name>.py per part, in ~/b3d_parts/build_<time>/
 b3dt script examples/parts.json bracket        # print the build123d script of one goal
 b3dt compare a.step b.step                     # IoU of two parts
@@ -62,7 +62,7 @@ part = single_solid(b.part)
 |---|---|
 | `goal_format` | The goal format: kinds, parameters, conventions, an example. The agent reads it first. |
 | `validate_goals` | Static checks of `{name: goal}`. |
-| `check_goals` | Builds each goal without files: buildable or not and why, volume, bbox. |
+| `check_goals` | Builds each goal without files: buildable or not and why, volume, bbox, `center_of_mass` (mm) and `inertia_mm5` (the inertia tensor about the centre of mass for unit density, mm⁵; OpenCascade's convention: off-diagonal = −∫xy; × density [kg/m³] × 1e-15 = kg·m²). |
 | `build_parts` | Builds the goals: per part the `.step`, the build123d script `.py` (and `.stl` on request), volume, bbox, time per feature. |
 | `get_script` | The standalone build123d script of one goal, as text. |
 | `verify_part` | IoU of a `.step` built elsewhere (another CAD tool, an LLM's own script) against a goal. |
@@ -151,7 +151,8 @@ For any other goal file (the S 80, synthetic suites), `tools/freecad_reference.s
 
 | Component | Version |
 |---|---|
-| Package | 2026.10.20.1 |
+| Package | 2026.10.21.1 |
+| `translate.py`, `mcp_server.py` | 2026.10.21.1 (results add `center_of_mass` and `inertia_mm5`, the mass properties for unit density, so openmodelica-translator and others get masses and moments of inertia from a goal) |
 | `ops.py`, `goalformat.py`, `standards.py`, `translate.py`, `api.py`, `mcp_server.py` | 2026.10.20.1 (grids, patterns of several features, of patterns and of the whole part, skipped copies; outline shorthands, ellipse arcs, holes in outlines; `base_sphere`, `base_cone`, `base_torus`, `base_wedge`, `base_polygon`; `slot`, `slot_arc`; `hole_std` with ISO metric sizes, fits, heads, tapped and threaded holes; `corner_r`; asymmetric chamfers; per-face shell thickness; `combine` with other goals and STEP files; scripts inline the screw table) |
 | `ops.py`, `goalformat.py` (before) | 2026.10.17.1 (angled planes, as Taiga's patch 0020: `ux`, `uy`, `uz` on the six sketched kinds, the plane's frame and symmetric extrusion; validation with Taiga's messages, plus errors for `at`, `until`, `taper`, `tip`; `pocket_rect` without depth goes through all on an angled plane) |
 | `ops.py`, `goalformat.py`, `mcp_server.py` (before) | 2026.10.16.2 (`taper` and `until` on bosses and pockets; blind holes with `tip`, `hole_cb`, `hole_cs`; `draft`, `offset`, `profile_intersect`, `split`, `thicken`, `thread`, `text`, `profile_project`; helix path segments; loft, sweep and thicken accepted as later features in validation) |
