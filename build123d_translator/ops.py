@@ -1,5 +1,5 @@
 """ops.py — goal features as build123d operations.
-Version: 2026.10.20.1
+Version: 2026.10.28.1
 
 `Builder` turns the features of a goal, in order, into one solid. Each feature kind is a
 method with the goal's parameters as keyword arguments, so a goal reads as a script:
@@ -559,11 +559,13 @@ class Builder:
     [(shape, "add"/"sub"), ...] (None for fillets, chamfers, shells and other whole-part changes);
     `history` those of every feature, for patterns and mirrors."""
 
-    def __init__(self, scale: float = 0.0):
+    def __init__(self, scale: float = 0.0, keep_parts: bool = False):
         self.part = None
         self.last = None
         self.history = []
         self.scale = scale
+        self.keep_parts = keep_parts   # the part after every feature (pictures: which feature made each face)
+        self.parts = []
 
     # -- helpers --
     def _set(self, shape, tool=None, op=None):
@@ -573,6 +575,8 @@ class Builder:
         """Every feature ends here, once: the new part and its tools, recorded for later patterns."""
         self.part, self.last = shape, tools
         self.history.append(tools)
+        if self.keep_parts:
+            self.parts.append(shape)
         if not self.scale and shape is not None:  # bases goal_scale cannot size (combine)
             sz = shape.bounding_box().size
             self.scale = max(sz.X, sz.Y, sz.Z)
@@ -1360,12 +1364,13 @@ def goal_scale(features: list) -> float:
     return max(ext, p["h"]) if f["kind"] == "profile_base" else ext
 
 
-def build_goal(goal: dict):
-    """The solid of a goal {"features": [...]}, plus seconds per feature."""
+def build_goal(goal: dict, builder: Builder | None = None):
+    """The solid of a goal {"features": [...]}, plus seconds per feature. builder: one of your own (e.g. with
+    keep_parts=True), built in place."""
     import time
 
     feats = goal["features"]
-    b = Builder(scale=float(goal.get("scale") or goal_scale(feats)))
+    b = builder if builder is not None else Builder(scale=float(goal.get("scale") or goal_scale(feats)))
     times = []
     for i, f in enumerate(feats):
         t0 = time.perf_counter()

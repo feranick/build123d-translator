@@ -1,5 +1,5 @@
 """goalformat.py — the goal format: kinds, conventions, an example, and static validation.
-Version: 2026.10.20.1
+Version: 2026.10.28.1
 
 A goal file is {name: goal}; a goal is {"features": [{"kind": ..., "params": {...}}, ...]},
 one solid part, features in build order, lengths in mm. The format is the one of the
@@ -228,6 +228,11 @@ CONVENTIONS = [
     "total); a hole, pocket_rect, profile_pocket, slot or hole_std without depth goes through all, both ways. Only "
     + ", ".join(ANGLED_KINDS) + "; no off, at, until, taper or tip (hole_std: no head or thread).",
     "One goal is one solid part; several separate solids are several goals.",
+    "Pictures: a goal's \"images\": true (a shaded view, and the faces coloured by the feature that made them, front and "
+    "back) or [{name, color: part | feature, view: iso | iso_back | top | bottom | front | back | left | right | [elev, "
+    "azim], highlight: [feature numbers], edges, quality: high (VTK) | basic, slice: {axis, at}}] writes PNGs with the "
+    "build (parts.<name>.images.<view>.path; get_image shows them): check by eye that every feature went where it "
+    "should. render_images draws other views later.",
 ]
 
 EXAMPLE = {"bracket": {"features": [
@@ -572,6 +577,9 @@ def validate_goal(goal: dict) -> dict:
             axis = next(a for a in "xyz" if p.get("n" + a, 0) != 0)
             if _num(p.get(axis)) and abs(p[axis] - p["off"]) > 1e-6:
                 warnings.append(f"{where}: the centre's {axis} ({p[axis]}) differs from off ({p['off']}); the plane at {axis} = off is used")
+    if isinstance(goal, dict) and "images" in goal:
+        from .render import image_errors
+        errors += image_errors(goal["images"], goal)
     return {"ok": not errors, "errors": errors, "warnings": warnings}
 
 

@@ -4,15 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "build123d-translator"
-version = "2026.10.21.1"
+version = "2026.10.28.1"
 description = "Goals (ordered CAD features with dimensions) to build123d solids, STEP files and scripts; checker and MCP server"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Nicola Ferralis", email = "ferralis@generalflash.com" }]
-dependencies = ["build123d>=0.9"]
+dependencies = ["build123d>=0.9", "matplotlib>=3.5"]
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.2"]
+# VTK pictures ("quality": "high"): also an offscreen OpenGL (libosmesa6, libegl1) or xvfb (README, Pictures)
+render = ["pyvista>=0.43"]
 test = ["pytest"]
 
 [project.scripts]

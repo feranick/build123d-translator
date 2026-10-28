@@ -10,11 +10,12 @@ Why a translator: once a goal exists, there is nothing left to decide. Choosing 
 
 ```bash
 python -m venv .venv && source .venv/bin/activate      # Python 3.10+
-pip install -e ".[mcp,test]"                           # build123d, the MCP SDK, pytest
-pytest -q                                              # 61 tests, about 25 s
+pip install -e ".[mcp,test]"                           # build123d, matplotlib, the MCP SDK, pytest
+pip install -e ".[render]"                             # optional: VTK pictures (PyVista), "quality": "high"
+pytest -q                                              # 114 tests (one needs VTK), about 45 s
 ```
 
-build123d has wheels for Linux, macOS and Windows; no CAD application is needed.
+build123d has wheels for Linux, macOS and Windows; no CAD application is needed. VTK draws offscreen, so a server without a display needs one of: a GPU driver's EGL (`sudo apt install libegl1`), OSMesa (`sudo apt install libosmesa6`), or Xvfb (`sudo apt install xvfb`: the renderer then runs under `xvfb-run -a`). `b3dt status` shows what it found under `render` once a picture has been drawn. Matplotlib needs nothing more.
 
 ## Use
 
@@ -68,6 +69,21 @@ part = single_solid(b.part)
 | `verify_part` | IoU of a `.step` built elsewhere (another CAD tool, an LLM's own script) against a goal. |
 | `compare_parts` | IoU of two `.step` files. |
 | `get_file` | A written file as base64, for callers on another machine. |
+| `render_images` | New pictures of a part built by `build_parts` (its `request` and the goal's name), without changing its files; in a worker process, returns within `wait_s` (state `running` until done: call again). |
+| `get_image` | A PNG of a build or of `render_images` (under the output folder), as an image. |
+
+**Pictures** (2026.10.28.1, as cfd-translator and fea-translator 2026.10.28.1). A part can be valid and still wrong (a hole on the wrong face, a pattern the wrong way): volume and bbox do not show it, a picture does. `build_parts(images=true)` (or a goal's own `"images"`) writes `<request>/images/<name>/<view>.png`; the part's result lists them under `images`, with `faces_by_feature` (how many faces each feature left on the part).
+- *Views:* `{name, color: part | feature, view: iso | iso_back | top | bottom | front | back | left | right | [elev, azim], highlight: [feature numbers], edges (true), quality: high | basic, slice: {axis, at}}`. Defaults: a shaded `iso` view, and `features` / `features_back` (each face in the colour of the feature that made it, with a legend `3 hole`, `5 polar_pattern`, ... ; from the front and from the back). `highlight` greys out every other feature. `slice` keeps the part on the low side of the plane, the section face in its own colour, and by default looks from the cut's side.
+- *Which feature made a face:* the builder keeps the part after every feature (`Builder(keep_parts=True)`); a point on each final face is classified against those parts (OpenCascade's point classifier), and the face belongs to the earliest feature from which the point stays on the part's boundary to the end. A hole's wall is the hole's, the face it went through stays the base's, fillet faces are the fillet's, a pattern's and a mirror's copies are theirs.
+- *Renderers:* Matplotlib (Agg) by default and as the fallback: shaded triangles (long ones split so its depth sort holds), edges hidden exactly by a ray test (OpenCascade's ray-shape intersector), white background. VTK through PyVista for `"quality": "high"`: lit, smooth, depth-tested edges, drawn in a child process (`python -m build123d_translator.render_vtk <specs.json> <out dir> <name>`, one JSON line back) from scenes the parent writes, so an OpenGL crash cannot take down a worker or the server; `probe()` (cached per process) finds EGL, OSMesa or X, else runs it under `xvfb-run -a`. Without VTK a high-quality view is drawn with Matplotlib, with a warning.
+- *No saved state:* there is no solve, so `render_images` rebuilds the goal from the request's `goals.json` (deterministic, milliseconds to seconds) and draws it.
+
+| Setting | Default | What |
+|---|---|---|
+| `B3DT_RENDER` | (VTK when it can draw) | `matplotlib`: never VTK |
+| `B3DT_RENDER_TIMEOUT` | 900 | seconds for the VTK child process |
+| `B3DT_RENDER_EXTRA` | 300 | seconds added to `B3DT_TIMEOUT` for a part with pictures |
+| `B3DT_AUX_WORKERS` | 2 | worker processes of `render_images` |
 
 Run it with `b3dt-mcp` (stdio) or `b3dt-mcp --http 8766 [--host 0.0.0.0]` (streamable HTTP at `/mcp`, no authentication: trusted networks or a tunnel only). It runs on the same computer as the desktop client; in the Claude desktop app's `claude_desktop_config.json`:
 
@@ -138,6 +154,8 @@ For any other goal file (the S 80, synthetic suites), `tools/freecad_reference.s
 | `build123d_translator/ops.py` | The builder: each feature kind as a build123d operation (also copied into the scripts) |
 | `build123d_translator/goalformat.py` | The goal format and static validation |
 | `build123d_translator/standards.py` | ISO metric screw holes for `hole_std` (pitch, tap drill, clearances, counterbores, countersinks) |
+| `build123d_translator/render.py` | Pictures: which feature made each face, scenes, validation, defaults, Matplotlib |
+| `build123d_translator/render_vtk.py` | Pictures with VTK (PyVista) in a child process; the offscreen probe |
 | `build123d_translator/translate.py` | Build, script, export, load, IoU |
 | `build123d_translator/api.py` | JSON functions with worker processes and time limits |
 | `build123d_translator/cli.py` | `b3dt` command line |
@@ -151,8 +169,9 @@ For any other goal file (the S 80, synthetic suites), `tools/freecad_reference.s
 
 | Component | Version |
 |---|---|
-| Package | 2026.10.21.1 |
-| `translate.py`, `mcp_server.py` | 2026.10.21.1 (results add `center_of_mass` and `inertia_mm5`, the mass properties for unit density, so openmodelica-translator and others get masses and moments of inertia from a goal) |
+| Package | 2026.10.28.1 |
+| `render.py`, `render_vtk.py` (new), `api.py`, `cli.py`, `mcp_server.py`, `goalformat.py`, `ops.py` | 2026.10.28.1 (pictures, as cfd-translator and fea-translator 2026.10.28.1: a goal's `images` or `build_parts(images=true)`; faces coloured by the feature that made them, highlights, section cuts, named views; `render_images` and `get_image` tools, `b3dt images`, `b3dt status` / `tool_status` with `render`; Matplotlib by default, VTK (`render` extra) for `quality: high` in a child process; `Builder(keep_parts=True)`; matplotlib a dependency) |
+| `translate.py`, `mcp_server.py` (before) | 2026.10.21.1 (results add `center_of_mass` and `inertia_mm5`, the mass properties for unit density, so openmodelica-translator and others get masses and moments of inertia from a goal) |
 | `ops.py`, `goalformat.py`, `standards.py`, `translate.py`, `api.py`, `mcp_server.py` | 2026.10.20.1 (grids, patterns of several features, of patterns and of the whole part, skipped copies; outline shorthands, ellipse arcs, holes in outlines; `base_sphere`, `base_cone`, `base_torus`, `base_wedge`, `base_polygon`; `slot`, `slot_arc`; `hole_std` with ISO metric sizes, fits, heads, tapped and threaded holes; `corner_r`; asymmetric chamfers; per-face shell thickness; `combine` with other goals and STEP files; scripts inline the screw table) |
 | `ops.py`, `goalformat.py` (before) | 2026.10.17.1 (angled planes, as Taiga's patch 0020: `ux`, `uy`, `uz` on the six sketched kinds, the plane's frame and symmetric extrusion; validation with Taiga's messages, plus errors for `at`, `until`, `taper`, `tip`; `pocket_rect` without depth goes through all on an angled plane) |
 | `ops.py`, `goalformat.py`, `mcp_server.py` (before) | 2026.10.16.2 (`taper` and `until` on bosses and pockets; blind holes with `tip`, `hole_cb`, `hole_cs`; `draft`, `offset`, `profile_intersect`, `split`, `thicken`, `thread`, `text`, `profile_project`; helix path segments; loft, sweep and thicken accepted as later features in validation) |
